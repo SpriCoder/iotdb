@@ -19,6 +19,7 @@
 package org.apache.iotdb.db.engine.storagegroup;
 
 import org.apache.iotdb.db.concurrent.IoTDBThreadPoolFactory;
+import org.apache.iotdb.db.concurrent.ThreadName;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBConstant;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
@@ -268,7 +269,12 @@ public class StorageGroupProcessor {
 
   private volatile boolean compacting = false;
 
-  /** get the direct byte buffer from pool, each fetch contains two ByteBuffer */
+  private ScheduledExecutorService walTrimScheduleTask;
+
+  /**
+   * get the direct byte buffer from pool, each fetch contains two ByteBuffer, return null if fetch
+   * fails
+   */
   public ByteBuffer[] getWalDirectByteBuffer() {
     ByteBuffer[] res = new ByteBuffer[2];
     synchronized (walByteBufferPool) {
@@ -298,9 +304,20 @@ public class StorageGroupProcessor {
       } else {
         // if the queue is empty and current size is less than MAX_BYTEBUFFER_NUM
         // we can construct another two more new byte buffer
-        currentWalPoolSize += 2;
-        res[0] = ByteBuffer.allocateDirect(WAL_BUFFER_SIZE);
-        res[1] = ByteBuffer.allocateDirect(WAL_BUFFER_SIZE);
+        try {
+          res[0] = ByteBuffer.allocateDirect(WAL_BUFFER_SIZE);
+          res[1] = ByteBuffer.allocateDirect(WAL_BUFFER_SIZE);
+          currentWalPoolSize += 2;
+        } catch (OutOfMemoryError e) {
+          logger.error("Allocate ByteBuffers error", e);
+          if (res[0] != null) {
+            MmapUtil.clean((MappedByteBuffer) res[0]);
+          }
+          if (res[1] != null) {
+            MmapUtil.clean((MappedByteBuffer) res[1]);
+          }
+          return null;
+        }
       }
       // if the pool is empty, set the time back to MAX_VALUE
       if (walByteBufferPool.isEmpty()) {
@@ -382,15 +399,19 @@ public class StorageGroupProcessor {
                 virtualStorageGroupId,
                 storageGroupSysDir.getAbsolutePath());
 
-    ScheduledExecutorService executorService =
+    // recover tsfiles
+    recover();
+    // start trim task at last
+    walTrimScheduleTask =
         IoTDBThreadPoolFactory.newSingleThreadScheduledExecutor(
-            String.format("WAL-trimTask-%s/%s", logicalStorageGroupName, virtualStorageGroupId));
-    executorService.scheduleWithFixedDelay(
+            String.format(
+                "%s-%s/%s",
+                ThreadName.WAL_TRIM.getName(), logicalStorageGroupName, virtualStorageGroupId));
+    walTrimScheduleTask.scheduleWithFixedDelay(
         this::trimTask,
         config.getWalPoolTrimIntervalInMS(),
         config.getWalPoolTrimIntervalInMS(),
         TimeUnit.MILLISECONDS);
-    recover();
   }
 
   public String getLogicalStorageGroupName() {
@@ -496,8 +517,6 @@ public class StorageGroupProcessor {
       CompactionMergeRecoverTask recoverTask =
           new CompactionMergeRecoverTask(
               tsFileManagement,
-              new ArrayList<>(tsFileManagement.getTsFileList(true)),
-              tsFileManagement.getTsFileList(false),
               storageGroupSysDir.getPath(),
               tsFileManagement::mergeEndAction,
               taskName,
@@ -654,6 +673,7 @@ public class StorageGroupProcessor {
 
   private void recoverTsFiles(List<TsFileResource> tsFiles, boolean isSeq) throws IOException {
     boolean needsCheckTsFile = true;
+    List<TsFileResource> resourcesToBeInserted = new ArrayList<>();
     for (int i = tsFiles.size() - 1; i >= 0; i--) {
       TsFileResource tsFileResource = tsFiles.get(i);
       long timePartitionId = tsFileResource.getTimePartition();
@@ -675,7 +695,7 @@ public class StorageGroupProcessor {
           writer =
               recoverPerformer.recover(false, this::getWalDirectByteBuffer, this::releaseWalBuffer);
           tsFileResource.setClosed(true);
-          tsFileManagement.add(tsFileResource, isSeq);
+          resourcesToBeInserted.add(tsFileResource);
           continue;
         } else {
           writer =
@@ -750,7 +770,10 @@ public class StorageGroupProcessor {
           tsFileProcessor.getTsFileProcessorInfo().addTSPMemCost(chunkMetadataSize);
         }
       }
-      tsFileManagement.add(tsFileResource, isSeq);
+      resourcesToBeInserted.add(tsFileResource);
+    }
+    for (int i = resourcesToBeInserted.size() - 1; i >= 0; --i) {
+      tsFileManagement.add(resourcesToBeInserted.get(i), isSeq);
     }
   }
 
@@ -1306,7 +1329,7 @@ public class StorageGroupProcessor {
     synchronized (walByteBufferPool) {
       while (!walByteBufferPool.isEmpty()) {
         MmapUtil.clean((MappedByteBuffer) walByteBufferPool.removeFirst());
-        currentWalPoolSize--;
+        currentWalPoolSize -= 1;
       }
     }
   }
@@ -1572,8 +1595,19 @@ public class StorageGroupProcessor {
     }
   }
 
+  /**
+   * build query data source by searching all tsfile which fit in query filter
+   *
+   * @param pathList data paths
+   * @param context query context
+   * @param timeFilter time filter
+   * @param singleDeviceId selected deviceId (not null only when all the selected series are under
+   *     the same device)
+   * @return query data source
+   */
   public QueryDataSource query(
       List<PartialPath> pathList,
+      String singleDeviceId,
       QueryContext context,
       QueryFileManager filePathsManager,
       Filter timeFilter)
@@ -1585,6 +1619,7 @@ public class StorageGroupProcessor {
               tsFileManagement.getTsFileList(true),
               upgradeSeqFileList,
               pathList,
+              singleDeviceId,
               context,
               timeFilter,
               true);
@@ -1593,6 +1628,7 @@ public class StorageGroupProcessor {
               tsFileManagement.getTsFileList(false),
               upgradeUnseqFileList,
               pathList,
+              singleDeviceId,
               context,
               timeFilter,
               false);
@@ -1642,6 +1678,7 @@ public class StorageGroupProcessor {
       Collection<TsFileResource> tsFileResources,
       List<TsFileResource> upgradeTsFileResources,
       List<PartialPath> pathList,
+      String singleDeviceId,
       QueryContext context,
       Filter timeFilter,
       boolean isSeq)
@@ -1664,7 +1701,8 @@ public class StorageGroupProcessor {
 
     // for upgrade files and old files must be closed
     for (TsFileResource tsFileResource : upgradeTsFileResources) {
-      if (!tsFileResource.isSatisfied(timeFilter, isSeq, dataTTL, context.isDebug())) {
+      if (!tsFileResource.isSatisfied(
+          singleDeviceId, timeFilter, isSeq, dataTTL, context.isDebug())) {
         continue;
       }
       closeQueryLock.readLock().lock();
@@ -1676,7 +1714,8 @@ public class StorageGroupProcessor {
     }
 
     for (TsFileResource tsFileResource : tsFileResources) {
-      if (!tsFileResource.isSatisfied(timeFilter, isSeq, dataTTL, context.isDebug())) {
+      if (!tsFileResource.isSatisfied(
+          singleDeviceId, timeFilter, isSeq, dataTTL, context.isDebug())) {
         continue;
       }
       closeQueryLock.readLock().lock();
@@ -3034,5 +3073,9 @@ public class StorageGroupProcessor {
 
   public String getInsertWriteLockHolder() {
     return insertWriteLockHolder;
+  }
+
+  public ScheduledExecutorService getWALTrimScheduleTask() {
+    return walTrimScheduleTask;
   }
 }

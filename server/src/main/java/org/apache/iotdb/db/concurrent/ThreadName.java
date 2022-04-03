@@ -37,13 +37,16 @@ public enum ThreadName {
   COMPACTION_SERVICE("Compaction"),
   WAL_DAEMON("WAL-Sync"),
   WAL_FORCE_DAEMON("WAL-Force"),
+  WAL_TRIM("WAL-trimTask"),
+  WAL_FLUSH("WAL-Flush"),
   INDEX_SERVICE("Index"),
   SYNC_CLIENT("Sync-Client"),
   SYNC_SERVER("Sync"),
   SYNC_MONITOR("Sync-Monitor"),
   LOAD_TSFILE("Load-TsFile"),
   TIME_COST_STATISTIC("TIME_COST_STATISTIC"),
-  QUERY_SERVICE("Query");
+  QUERY_SERVICE("Query"),
+  SUB_RAW_QUERY_SERVICE("Sub_RawQuery");
 
   private String name;
 

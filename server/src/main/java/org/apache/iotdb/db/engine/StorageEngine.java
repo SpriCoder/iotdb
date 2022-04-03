@@ -32,7 +32,15 @@ import org.apache.iotdb.db.engine.storagegroup.StorageGroupProcessor.TimePartiti
 import org.apache.iotdb.db.engine.storagegroup.TsFileProcessor;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
 import org.apache.iotdb.db.engine.storagegroup.virtualSg.VirtualStorageGroupManager;
-import org.apache.iotdb.db.exception.*;
+import org.apache.iotdb.db.exception.BatchProcessException;
+import org.apache.iotdb.db.exception.LoadFileException;
+import org.apache.iotdb.db.exception.ShutdownException;
+import org.apache.iotdb.db.exception.StorageEngineException;
+import org.apache.iotdb.db.exception.StorageGroupNotReadyException;
+import org.apache.iotdb.db.exception.StorageGroupProcessorException;
+import org.apache.iotdb.db.exception.TsFileProcessorException;
+import org.apache.iotdb.db.exception.WriteProcessException;
+import org.apache.iotdb.db.exception.WriteProcessRejectException;
 import org.apache.iotdb.db.exception.metadata.IllegalPathException;
 import org.apache.iotdb.db.exception.metadata.MetadataException;
 import org.apache.iotdb.db.exception.metadata.StorageGroupNotSetException;
@@ -45,18 +53,16 @@ import org.apache.iotdb.db.qp.physical.crud.InsertPlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertRowPlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertRowsOfOneDevicePlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertTabletPlan;
-import org.apache.iotdb.db.query.context.QueryContext;
-import org.apache.iotdb.db.query.control.QueryResourceManager;
 import org.apache.iotdb.db.rescon.SystemInfo;
 import org.apache.iotdb.db.service.IService;
 import org.apache.iotdb.db.service.IoTDB;
 import org.apache.iotdb.db.service.ServiceType;
 import org.apache.iotdb.db.utils.TestOnly;
+import org.apache.iotdb.db.utils.ThreadUtils;
 import org.apache.iotdb.db.utils.UpgradeUtils;
 import org.apache.iotdb.rpc.RpcUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
 import org.apache.iotdb.service.rpc.thrift.TSStatus;
-import org.apache.iotdb.tsfile.read.filter.basic.Filter;
 import org.apache.iotdb.tsfile.utils.FilePathUtils;
 import org.apache.iotdb.tsfile.utils.Pair;
 
@@ -71,7 +77,6 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -381,11 +386,16 @@ public class StorageEngine implements IService {
 
   @Override
   public void stop() {
+    for (VirtualStorageGroupManager storageGroupManager : processorMap.values()) {
+      storageGroupManager.stopSchedulerPool();
+    }
     syncCloseAllProcessor();
-    stopTimedService(ttlCheckThread, "TTlCheckThread");
-    stopTimedService(seqMemtableTimedFlushCheckThread, "SeqMemtableTimedFlushCheckThread");
-    stopTimedService(unseqMemtableTimedFlushCheckThread, "UnseqMemtableTimedFlushCheckThread");
-    stopTimedService(tsFileTimedCloseCheckThread, "TsFileTimedCloseCheckThread");
+    ThreadUtils.stopThreadPool(ttlCheckThread, "TTlCheckThread");
+    ThreadUtils.stopThreadPool(
+        seqMemtableTimedFlushCheckThread, "SeqMemtableTimedFlushCheckThread");
+    ThreadUtils.stopThreadPool(
+        unseqMemtableTimedFlushCheckThread, "UnseqMemtableTimedFlushCheckThread");
+    ThreadUtils.stopThreadPool(tsFileTimedCloseCheckThread, "TsFileTimedCloseCheckThread");
     recoveryThreadPool.shutdownNow();
     if (!recoverAllSgThreadPool.isShutdown()) {
       recoverAllSgThreadPool.shutdownNow();
@@ -404,23 +414,12 @@ public class StorageEngine implements IService {
     this.reset();
   }
 
-  private void stopTimedService(ScheduledExecutorService pool, String poolName) {
-    if (pool != null) {
-      pool.shutdownNow();
-      try {
-        pool.awaitTermination(60, TimeUnit.SECONDS);
-      } catch (InterruptedException e) {
-        logger.warn("{} still doesn't exit after 60s", poolName);
-        Thread.currentThread().interrupt();
-        throw new StorageEngineFailureException(
-            String.format("StorageEngine failed to stop because of %s.", poolName), e);
-      }
-    }
-  }
-
   @Override
   public void shutdown(long milliseconds) throws ShutdownException {
     try {
+      for (VirtualStorageGroupManager storageGroupManager : processorMap.values()) {
+        storageGroupManager.stopSchedulerPool();
+      }
       forceCloseAllProcessor();
     } catch (TsFileProcessorException e) {
       throw new ShutdownException(e);
@@ -910,6 +909,7 @@ public class StorageEngine implements IService {
     VirtualStorageGroupManager virtualStorageGroupManager = processorMap.remove(storageGroupPath);
     virtualStorageGroupManager.deleteStorageGroupSystemFolder(
         systemDir + File.pathSeparator + storageGroupPath);
+    virtualStorageGroupManager.stopSchedulerPool();
   }
 
   public void loadNewTsFileForSync(TsFileResource newTsFileResource)
@@ -1041,26 +1041,8 @@ public class StorageEngine implements IService {
   }
 
   /** get all merge lock of the storage group processor related to the query */
-  public List<StorageGroupProcessor> mergeLock(List<PartialPath> pathList)
-      throws StorageEngineException {
-    Set<StorageGroupProcessor> set = new HashSet<>();
-    for (PartialPath path : pathList) {
-      set.add(getProcessor(path.getDevicePath()));
-    }
-    List<StorageGroupProcessor> list =
-        set.stream()
-            .sorted(Comparator.comparing(StorageGroupProcessor::getVirtualStorageGroupId))
-            .collect(Collectors.toList());
-    list.forEach(StorageGroupProcessor::readLock);
-    return list;
-  }
-
-  /**
-   * get all merge lock of the storage group processor related to the query and init QueryDataSource
-   */
-  public List<StorageGroupProcessor> mergeLockAndInitQueryDataSource(
-      List<PartialPath> pathList, QueryContext context, Filter timeFilter)
-      throws StorageEngineException, QueryProcessException {
+  public Pair<List<StorageGroupProcessor>, Map<StorageGroupProcessor, List<PartialPath>>> mergeLock(
+      List<PartialPath> pathList) throws StorageEngineException, QueryProcessException {
     Map<StorageGroupProcessor, List<PartialPath>> map = new HashMap<>();
     for (PartialPath path : pathList) {
       map.computeIfAbsent(getProcessor(path.getDevicePath()), key -> new ArrayList<>()).add(path);
@@ -1071,10 +1053,7 @@ public class StorageEngine implements IService {
             .collect(Collectors.toList());
     list.forEach(StorageGroupProcessor::readLock);
 
-    // init QueryDataSource
-    QueryResourceManager.getInstance().initQueryDataSource(map, context, timeFilter);
-
-    return list;
+    return new Pair<>(list, map);
   }
 
   /** unlock all merge lock of the storage group processor related to the query */

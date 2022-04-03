@@ -41,6 +41,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * QueryResourceManager manages resource (file streams) used by each query job, and assign Ids to
@@ -110,7 +111,7 @@ public class QueryResourceManager {
    * @param processorToSeriesMap Key: processor of the virtual storage group. Value: selected series
    *     under the virtual storage group
    */
-  public void initQueryDataSource(
+  public void initQueryDataSourceCache(
       Map<StorageGroupProcessor, List<PartialPath>> processorToSeriesMap,
       QueryContext context,
       Filter timeFilter)
@@ -120,11 +121,21 @@ public class QueryResourceManager {
       StorageGroupProcessor processor = entry.getKey();
       List<PartialPath> pathList = entry.getValue();
 
+      // when all the selected series are under the same device, the QueryDataSource will be
+      // filtered according to timeIndex
+      Set<String> selectedDeviceIdSet =
+          pathList.stream().map(PartialPath::getDevice).collect(Collectors.toSet());
+
       long queryId = context.getQueryId();
       String storageGroupPath = processor.getStorageGroupPath();
 
       QueryDataSource cachedQueryDataSource =
-          processor.query(pathList, context, filePathsManager, timeFilter);
+          processor.query(
+              pathList,
+              selectedDeviceIdSet.size() == 1 ? selectedDeviceIdSet.iterator().next() : null,
+              context,
+              filePathsManager,
+              timeFilter);
       cachedQueryDataSourcesMap
           .computeIfAbsent(queryId, k -> new HashMap<>())
           .put(storageGroupPath, cachedQueryDataSource);
@@ -145,15 +156,16 @@ public class QueryResourceManager {
         && cachedQueryDataSourcesMap.get(queryId).containsKey(storageGroupPath)) {
       cachedQueryDataSource = cachedQueryDataSourcesMap.get(queryId).get(storageGroupPath);
     } else {
-      // QueryDataSource is not cached earlier in cluster mode
+      // QueryDataSource is never cached in cluster mode
       StorageGroupProcessor processor =
           StorageEngine.getInstance().getProcessor(selectedPath.getDevicePath());
       cachedQueryDataSource =
           processor.query(
-              Collections.singletonList(selectedPath), context, filePathsManager, timeFilter);
-      cachedQueryDataSourcesMap
-          .computeIfAbsent(queryId, k -> new HashMap<>())
-          .put(storageGroupPath, cachedQueryDataSource);
+              Collections.singletonList(selectedPath),
+              selectedPath.getDevice(),
+              context,
+              filePathsManager,
+              timeFilter);
     }
 
     // construct QueryDataSource for selectedPath

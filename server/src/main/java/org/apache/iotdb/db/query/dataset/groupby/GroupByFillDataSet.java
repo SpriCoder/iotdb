@@ -26,6 +26,7 @@ import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.metadata.PartialPath;
 import org.apache.iotdb.db.qp.physical.crud.GroupByTimeFillPlan;
 import org.apache.iotdb.db.query.context.QueryContext;
+import org.apache.iotdb.db.query.control.QueryResourceManager;
 import org.apache.iotdb.db.query.executor.LastQueryExecutor;
 import org.apache.iotdb.db.query.executor.fill.IFill;
 import org.apache.iotdb.db.query.executor.fill.PreviousFill;
@@ -39,6 +40,9 @@ import org.apache.iotdb.tsfile.read.filter.factory.FilterFactory;
 import org.apache.iotdb.tsfile.read.query.dataset.QueryDataSet;
 import org.apache.iotdb.tsfile.utils.Pair;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -47,6 +51,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 public class GroupByFillDataSet extends QueryDataSet {
+
+  private static final Logger logger = LoggerFactory.getLogger(GroupByFillDataSet.class);
 
   private GroupByEngineDataSet groupByEngineDataSet;
   private final LastQueryExecutor lastQueryExecutor;
@@ -123,26 +129,36 @@ public class GroupByFillDataSet extends QueryDataSet {
         FilterFactory.and(
             TimeFilter.gtEq(lowerBound), TimeFilter.ltEq(groupByEngineDataSet.getStartTime()));
 
-    List<StorageGroupProcessor> list =
-        StorageEngine.getInstance()
-            .mergeLockAndInitQueryDataSource(
-                paths.stream().map(path -> (PartialPath) path).collect(Collectors.toList()),
-                context,
-                timeFilter);
+    Pair<List<StorageGroupProcessor>, Map<StorageGroupProcessor, List<PartialPath>>>
+        lockListAndProcessorToSeriesMapPair =
+            StorageEngine.getInstance()
+                .mergeLock(
+                    paths.stream().map(path -> (PartialPath) path).collect(Collectors.toList()));
+    List<StorageGroupProcessor> lockList = lockListAndProcessorToSeriesMapPair.left;
+    Map<StorageGroupProcessor, List<PartialPath>> processorToSeriesMap =
+        lockListAndProcessorToSeriesMapPair.right;
+
     try {
-      for (int i = 0; i < paths.size(); i++) {
-        PreviousFill fill = previousFillExecutors[i];
-        firstNotNullTV[i] = fill.getFillResult();
-        TimeValuePair timeValuePair = firstNotNullTV[i];
-        previousValue[i] = null;
-        previousTime[i] = Long.MAX_VALUE;
-        if (ascending && timeValuePair != null && timeValuePair.getValue() != null) {
-          previousValue[i] = timeValuePair.getValue().getValue();
-          previousTime[i] = timeValuePair.getTimestamp();
-        }
-      }
+      // init QueryDataSource Cache
+      QueryResourceManager.getInstance()
+          .initQueryDataSourceCache(processorToSeriesMap, context, timeFilter);
+    } catch (Exception e) {
+      logger.error("Meet error when init QueryDataSource ", e);
+      throw new QueryProcessException("Meet error when init QueryDataSource.", e);
     } finally {
-      StorageEngine.getInstance().mergeUnLock(list);
+      StorageEngine.getInstance().mergeUnLock(lockList);
+    }
+
+    for (int i = 0; i < paths.size(); i++) {
+      PreviousFill fill = previousFillExecutors[i];
+      firstNotNullTV[i] = fill.getFillResult();
+      TimeValuePair timeValuePair = firstNotNullTV[i];
+      previousValue[i] = null;
+      previousTime[i] = Long.MAX_VALUE;
+      if (ascending && timeValuePair != null && timeValuePair.getValue() != null) {
+        previousValue[i] = timeValuePair.getValue().getValue();
+        previousTime[i] = timeValuePair.getTimestamp();
+      }
     }
   }
 
