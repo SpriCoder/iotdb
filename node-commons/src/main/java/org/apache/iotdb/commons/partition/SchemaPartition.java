@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 public class SchemaPartition extends Partition {
 
@@ -90,21 +91,28 @@ public class SchemaPartition extends Partition {
    * Get SchemaPartition by partitionSlotsMap
    *
    * @param partitionSlotsMap Map<StorageGroup, List<SeriesPartitionSlot>>
+   * @param preDeletedStorageGroup
    * @return Subset of current SchemaPartition, including Map<StorageGroup, Map<SeriesPartitionSlot,
    *     RegionReplicaSet>>
    */
   public SchemaPartition getSchemaPartition(
-      Map<String, List<TSeriesPartitionSlot>> partitionSlotsMap) {
+      Map<String, List<TSeriesPartitionSlot>> partitionSlotsMap,
+      Set<String> preDeletedStorageGroup) {
     if (partitionSlotsMap.isEmpty()) {
       // Return all SchemaPartitions when the partitionSlotsMap is empty
-      return new SchemaPartition(
-          new HashMap<>(schemaPartitionMap), seriesSlotExecutorName, seriesPartitionSlotNum);
+      final Map<String, Map<TSeriesPartitionSlot, TRegionReplicaSet>> resultAll =
+          new HashMap<>(schemaPartitionMap);
+      for (String preDeleted : preDeletedStorageGroup) {
+        resultAll.remove(preDeleted);
+      }
+      return new SchemaPartition(resultAll, seriesSlotExecutorName, seriesPartitionSlotNum);
     } else {
       Map<String, Map<TSeriesPartitionSlot, TRegionReplicaSet>> result = new HashMap<>();
 
       partitionSlotsMap.forEach(
           (storageGroup, seriesPartitionSlots) -> {
-            if (schemaPartitionMap.containsKey(storageGroup)) {
+            if (schemaPartitionMap.containsKey(storageGroup)
+                && !preDeletedStorageGroup.contains(storageGroup)) {
               if (seriesPartitionSlots.isEmpty()) {
                 // Return all SchemaPartitions in one StorageGroup when the queried
                 // SeriesPartitionSlots is empty
@@ -127,6 +135,23 @@ public class SchemaPartition extends Partition {
 
       return new SchemaPartition(result, seriesSlotExecutorName, seriesPartitionSlotNum);
     }
+  }
+
+  /**
+   * Get SchemaPartition by storageGroup name
+   *
+   * @param matchedStorageGroup List<String>
+   * @return Subset of current SchemaPartition which contains matchedStorageGroup
+   */
+  public SchemaPartition getSchemaPartition(List<String> matchedStorageGroup) {
+    Map<String, Map<TSeriesPartitionSlot, TRegionReplicaSet>> result = new HashMap<>();
+    matchedStorageGroup.forEach(
+        (storageGroup) -> {
+          if (schemaPartitionMap.containsKey(storageGroup)) {
+            result.put(storageGroup, new HashMap<>(schemaPartitionMap.get(storageGroup)));
+          }
+        });
+    return new SchemaPartition(result, seriesSlotExecutorName, seriesPartitionSlotNum);
   }
 
   /**
@@ -204,6 +229,19 @@ public class SchemaPartition extends Partition {
       size--;
     }
     return result;
+  }
+
+  public List<RegionReplicaSetInfo> getSchemaDistributionInfo() {
+    Map<TRegionReplicaSet, RegionReplicaSetInfo> distributionMap = new HashMap<>();
+    schemaPartitionMap.forEach(
+        (storageGroup, partition) -> {
+          for (TRegionReplicaSet regionReplicaSet : partition.values()) {
+            distributionMap
+                .computeIfAbsent(regionReplicaSet, RegionReplicaSetInfo::new)
+                .addStorageGroup(storageGroup);
+          }
+        });
+    return new ArrayList<>(distributionMap.values());
   }
 
   private void writeMap(
