@@ -27,6 +27,7 @@ import org.apache.iotdb.commons.service.ThriftServiceThread;
 import org.apache.iotdb.confignode.conf.ConfigNodeConf;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
 import org.apache.iotdb.confignode.rpc.thrift.ConfigIService;
+import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
 
 /** ConfigNodeRPCServer exposes the interface that interacts with the DataNode */
 public class ConfigNodeRPCService extends ThriftService implements ConfigNodeRPCServiceMBean {
@@ -53,7 +54,11 @@ public class ConfigNodeRPCService extends ThriftService implements ConfigNodeRPC
 
   @Override
   public void initTProcessor() throws InstantiationException {
-    processor = new ConfigIService.Processor<>(configNodeRPCServiceProcessor);
+    if (MetricConfigDescriptor.getInstance().getMetricConfig().getEnableMetric()) {
+      processor = new ProcessorWithMetrics(configNodeRPCServiceProcessor);
+    } else {
+      processor = new ConfigIService.Processor<>(configNodeRPCServiceProcessor);
+    }
   }
 
   @Override
