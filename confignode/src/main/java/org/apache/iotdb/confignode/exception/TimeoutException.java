@@ -16,32 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+package org.apache.iotdb.confignode.exception;
 
-package org.apache.iotdb.db.mpp.plan.planner.distribution;
+public class TimeoutException extends ConfigNodeException {
 
-import org.apache.iotdb.db.mpp.common.MPPQueryContext;
-
-public class DistributionPlanContext {
-  protected boolean isRoot;
-  protected MPPQueryContext queryContext;
-  protected boolean forceAddParent;
-
-  protected DistributionPlanContext(MPPQueryContext queryContext) {
-    this.isRoot = true;
-    this.queryContext = queryContext;
-    this.forceAddParent = false;
-  }
-
-  protected DistributionPlanContext copy() {
-    return new DistributionPlanContext(queryContext);
-  }
-
-  protected DistributionPlanContext setRoot(boolean isRoot) {
-    this.isRoot = isRoot;
-    return this;
-  }
-
-  protected void setForceAddParent(boolean forceAddParent) {
-    this.forceAddParent = forceAddParent;
+  public TimeoutException(String message) {
+    super(message);
   }
 }
