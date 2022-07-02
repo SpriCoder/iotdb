@@ -104,4 +104,13 @@ public class RemoteServerEnv implements BaseEnv {
     }
     return connection;
   }
+
+  public void setTestMethodName(String testCaseName) {
+    // Do nothing
+  }
+
+  @Override
+  public void dumpTestJVMSnapshot() {
+    // Do nothing
+  }
 }

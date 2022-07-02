@@ -174,7 +174,7 @@ public class RatisConfig {
 
     public static class Builder {
       private TimeDuration timeoutMin = TimeDuration.valueOf(2, TimeUnit.SECONDS);
-      private TimeDuration timeoutMax = TimeDuration.valueOf(8, TimeUnit.SECONDS);
+      private TimeDuration timeoutMax = TimeDuration.valueOf(4, TimeUnit.SECONDS);
       private TimeDuration requestTimeout = TimeDuration.valueOf(20, TimeUnit.SECONDS);
       private TimeDuration sleepTime = TimeDuration.valueOf(1, TimeUnit.SECONDS);
       private TimeDuration slownessTimeout = TimeDuration.valueOf(10, TimeUnit.MINUTES);
@@ -519,13 +519,13 @@ public class RatisConfig {
       private SizeInBytes queueByteLimit = SizeInBytes.valueOf("64MB");
       private int purgeGap = 1024;
       private boolean purgeUptoSnapshotIndex = false;
-      private SizeInBytes segmentSizeMax = SizeInBytes.valueOf("8MB");
-      private int segmentCacheNumMax = 6;
+      private SizeInBytes segmentSizeMax = SizeInBytes.valueOf("24MB");
+      private int segmentCacheNumMax = 2;
       private SizeInBytes segmentCacheSizeMax = SizeInBytes.valueOf("200MB");
       private SizeInBytes preallocatedSize = SizeInBytes.valueOf("4MB");
       private SizeInBytes writeBufferSize = SizeInBytes.valueOf("64KB");
       private int forceSyncNum = 128;
-      private boolean unsafeFlushEnabled = false;
+      private boolean unsafeFlushEnabled = true;
 
       public Log build() {
         return new Log(

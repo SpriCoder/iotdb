@@ -25,11 +25,19 @@
     <property name="severity" value="error"/>
     <property name="fileExtensions" value="java"/>
     <module name="BeforeExecutionExclusionFileFilter">
+        <!--Generate these files by: find . -name \*.java -print | xargs -n 1 basename | awk -F '.' '{print "|^.*"$1"\\.java$|"}' | grep IT -->
         <property name="fileNamePattern"
-                  value="(^.*([\\/]src[\\/]main|[\\/]src[\\/]test[\\/]java[\\/]org[\\/]apache[\\/]iotdb[\\/]session)[\\/].*$)|
+                  value="(^.*([\\/]src[\\/]main|[\\/]src[\\/]test[\\/]java[\\/]org[\\/]apache[\\/]iotdb[\\/]session|)[\\/].*$)|
+                |^.*AlignedWriteUtil\.java$|
+                |^.*StandaloneEnv\.java$|
+                |^.*StandaloneEnvConfig\.java$|
+                |^.*SyncTestUtil\.java$|
+                |^.*TransportClientMock\.java$|
+                |^.*TransportHandlerMock\.java$|
                 |^.*IoTDBSchemaTemplateIT\.java$|
                 |^.*IoTDBSeriesReaderIT\.java$|
                 |^.*IoTDBCompactionIT\.java$|
+                |^.*IoTDBSnapshotIT\.java$|
                 |^.*IoTDBAggregationByLevelIT\.java$|
                 |^.*IoTDBUDFNestAggregationIT\.java$|
                 |^.*IoTDBAggregationDeleteIT\.java$|
@@ -39,7 +47,6 @@
                 |^.*IoTDBAggregationLargeDataIT\.java$|
                 |^.*IoTDBPartialInsertionIT\.java$|
                 |^.*IoTDBInsertWithoutTimeIT\.java$|
-                |^.*IoTDBUDFManagementIT\.java$|
                 |^.*IoTDBMultiSeriesIT\.java$|
                 |^.*IoTDBDisableAlignIT\.java$|
                 |^.*IoTDBManageTsFileResourceIT\.java$|
@@ -56,10 +63,12 @@
                 |^.*IoTDBArithmeticIT\.java$|
                 |^.*IoTDBQueryWithIDTableIT\.java$|
                 |^.*IoTDBDaemonIT\.java$|
+                |^.*IoTDBTriggerForwardIT\.java$|
                 |^.*IoTDBEncodingIT\.java$|
                 |^.*IoTDBNestedQueryIT\.java$|
                 |^.*IoTDBSelectSchemaIT\.java$|
                 |^.*IoTDBSortedShowTimeseriesIT\.java$|
+                |^.*IoTDBLoadExternalTsfileWithVirtualSGIT\.java$|
                 |^.*IoTDBFillIT\.java$|
                 |^.*IoTDBSelectCompareExpressionIT\.java$|
                 |^.*IoTDBFilePathUtilsIT\.java$|
@@ -70,6 +79,7 @@
                 |^.*IoTDBCompressTypeIT\.java$|
                 |^.*IoTDBTagAlterIT\.java$|
                 |^.*IoTDBQueryDemoIT\.java$|
+                |^.*IoTDBSyntaxConventionIdentifierIT\.java$|
                 |^.*IoTDBNumberPathIT\.java$|
                 |^.*IoTDBSettleIT\.java$|
                 |^.*IoTDBOverlappedPageIT\.java$|
@@ -88,59 +98,32 @@
                 |^.*IoTDBSameMeasurementsDifferentTypesIT\.java$|
                 |^.*IoTDBRpcCompressionIT\.java$|
                 |^.*IoTDBAlignByDeviceIT\.java$|
-                |^.*IoTDBLastQueryWithoutLastCacheWithDeletion2IT\.java$|
-                |^.*IoTDBGroupByQueryWithoutValueFilterIT\.java$|
-                |^.*IoTDBInsertAlignedValuesIT\.java$|
-                |^.*IoTDBAggregationWithoutValueFilterWithDeletion2IT\.java$|
-                |^.*IoTDBAggregationWithoutValueFilterIT\.java$|
-                |^.*IoTDBRawQueryWithoutValueFilterWithDeletion2IT\.java$|
                 |^.*IoTDBLoadExternalAlignedTsFileIT\.java$|
-                |^.*IoTDBLastQueryWithDeletionIT\.java$|
                 |^.*IoTDBGroupByQueryWithValueFilterWithDeletion2IT\.java$|
                 |^.*IoTDBGroupBySlidingWindowQueryWithoutValueFilterIT\.java$|
                 |^.*IoTDBRawQueryWithValueFilterIT\.java$|
-                |^.*IoTDBLastQuery2IT\.java$|
-                |^.*IoTDBLastQueryWithDeletion2IT\.java$|
                 |^.*IoTDBAggregationWithValueFilterIT\.java$|
-                |^.*IoTDBRawQueryWithoutValueFilter3IT\.java$|
-                |^.*IoTDBLastQueryIT\.java$|
                 |^.*IoTDBGroupByFillQueryBigDataIT\.java$|
                 |^.*IoTDBGroupByQueryWithValueFilterWithDeletionIT\.java$|
-                |^.*IoTDBAlignByDeviceIT\.java$|
                 |^.*IoTDBAggregationWithValueFilterWithDeletion2IT\.java$|
-                |^.*IoTDBGroupByQueryWithoutValueFilterWithDeletion2IT\.java$|
-                |^.*IoTDBAggregationWithoutValueFilter2IT\.java$|
                 |^.*IoTDBAggregationWithValueFilter2IT\.java$|
                 |^.*IoTDBRawQueryWithValueFilterWithDeletion2IT\.java$|
                 |^.*IoTDBGroupByFillQueryIT\.java$|
                 |^.*IoTDBDeleteTimeseriesIT\.java$|
                 |^.*IoTDBDeletionIT\.java$|
-                |^.*IoTDBRawQueryWithoutValueFilterWithDeletionIT\.java$|
-                |^.*IoTDBLastQueryWithoutLastCache2IT\.java$|
-                |^.*IoTDBRawQueryWithoutValueFilterIT\.java$|
-                |^.*IoTDBLastQueryWithoutLastCacheIT\.java$|
-                |^.*IoTDBGroupByQueryWithoutValueFilter2IT\.java$|
                 |^.*IoTDBGroupByQueryWithValueFilter2IT\.java$|
-                |^.*IoTDBGroupByQueryWithoutValueFilterWithDeletionIT\.java$|
+                |^.*IoTDBEmptyDataIT\.java$|
                 |^.*IoTDBAggregationWithValueFilterWithDeletionIT\.java$|
                 |^.*IoTDBRawQueryWithValueFilterWithDeletionIT\.java$|
                 |^.*IoTDBAggregationGroupByLevelIT\.java$|
-                |^.*IoTDBAlignByDevice2IT\.java$|
                 |^.*IoTDBRawQueryWithValueFilter2IT\.java$|
                 |^.*IoTDBGroupBySlidingWindowQueryWithValueFilterIT\.java$|
-                |^.*IoTDBRawQueryWithoutValueFilter2IT\.java$|
-                |^.*AlignedWriteUtil\.java$|
-                |^.*IoTDBLastQueryWithoutLastCacheWithDeletionIT\.java$|
                 |^.*IoTDBGroupByQueryWithValueFilterIT\.java$|
-                |^.*IoTDBAggregationWithoutValueFilterWithDeletionIT\.java$|
                 |^.*IoTDBMultiDeviceIT\.java$|
                 |^.*IoTDBQueryVersionAdaptionIT\.java$|
-                |^.*IoTDBSyntaxConventionVersionAdaptionIT\.java$|
                 |^.*IoTDBDDLVersionAdaptionIT\.java$|
                 |^.*IoTDBDeletionVersionAdaptionIT\.java$|
                 |^.*IoTDBCreateStorageGroupIT\.java$|
-                |^.*StandaloneEnv\.java$|
-                |^.*StandaloneEnvConfig\.java$|
                 |^.*IoTDBCompleteIT\.java$|
                 |^.*IOTDBGroupByInnerIntervalIT\.java$|
                 |^.*IoTDBGroupByFillWithRangeIT\.java$|
@@ -182,36 +165,38 @@
                 |^.*IoTDBResultMetadataIT\.java$|
                 |^.*IoTDBWithoutAnyNullIT\.java$|
                 |^.*IoTDBQuotedPathIT\.java$|
-                |^.*TransportClientMock\.java$|
                 |^.*IoTDBSyncReceiverLoaderIT\.java$|
                 |^.*IoTDBSyncSenderIT\.java$|
                 |^.*IoTDBSyncReceiverIT\.java$|
-                |^.*IoTDBSnapshotIT\.java$|
-                |^.*IoTDBTriggerForwardIT\.java$|
-                |^.*TransportHandlerMock\.java$|
-                |^.*IoTDBSyntaxConventionStringLiteralIT\.java|
                 |^.*IoTDBSyncReceiverCollectorIT\.java$|
-                |^.*SyncTestUtil\.java$|
                 |^.*IoTDBUDTFBuiltinFunctionIT\.java$|
                 |^.*IoTDBInsertNaNIT\.java$|
                 |^.*IoTDBLastIT\.java$|
                 |^.*IoTDBNewTsFileCompactionIT\.java$|
+                |^.*IoTDBSyntaxConventionStringLiteralIT\.java$|
                 |^.*IoTDBSequenceDataQueryIT\.java$|
                 |^.*IoTDBTimePartitionIT\.java$|
                 |^.*IoTDBCloseIT\.java$|
                 |^.*IoTDBQueryWithRecreatedTimeseriesIT\.java$|
                 |^.*IoTDBEngineTimeGeneratorIT\.java$|
+                |^.*IoTDBInsertNullIT\.java$|
                 |^.*IoTDBCheckConfigIT\.java$|
                 |^.*IoTDBMultiOverlappedPageIT\.java$|
                 |^.*IoTDBAlignedTimeSeriesCompactionIT\.java$|
                 |^.*IoTDBRestartIT\.java$|
-                |^.*IoTDBSyntaxConventionIT\.java$|
-                |^.*IoTDBSyntaxConventionIdentifierIT\.java$|
-                |^.*IoTDBInsertNullIT\.java$|
                 |^.*IoTDBUDTFNonAlignQueryIT\.java$|
                 |^.*IoTDBSetSystemReadOnlyWritableIT\.java$|
                 |^.*IoTDBContinuousQueryIT\.java$|
-                |^.*IoTDBSizeTieredCompactionIT\.java$"/>
+                |^.*IoTDBSizeTieredCompactionIT\.java$|
+                |^.*IoTDBSessionVectorAggregationIT\.java$|
+                |^.*IoTDBSessionDisableMemControlIT\.java$|
+                |^.*IoTDBSessionSimpleIT\.java$|
+                |^.*IoTDBSessionComplexIT\.java$|
+                |^.*IoTDBSessionVectorABDeviceIT\.java$|
+                |^.*IoTDBSessionVectorAggregationWithUnSeqIT\.java$|
+                |^.*IoTDBSessionVectorInsertIT\.java$|
+                |^.*IoTDBSessionIteratorIT\.java$|
+                |^.*IoTDBSessionSyntaxConventionIT\.java$"/>
     </module>
     <!--    <module name="RegexpOnFilename">-->
     <!--        <property name="fileNamePattern" value="^.*IT\.java$"/>-->

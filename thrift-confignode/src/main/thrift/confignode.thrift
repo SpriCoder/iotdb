@@ -29,6 +29,10 @@ struct TDataNodeRegisterReq {
   2: optional map<string, TStorageGroupSchema> statusMap
 }
 
+struct TDataNodeActiveReq {
+  1: required common.TDataNodeInfo dataNodeInfo
+}
+
 struct TGlobalConfig {
   1: required string dataRegionConsensusProtocolClass
   2: required string schemaRegionConsensusProtocolClass
@@ -63,12 +67,6 @@ struct TDeleteStorageGroupsReq {
   1: required list<string> prefixPathList
 }
 
-struct TSetTTLReq {
-  1: required string storageGroup
-  2: required i64 TTL
-}
-
-
 struct TSetSchemaReplicationFactorReq {
   1: required string storageGroup
   2: required i32 schemaReplicationFactor
@@ -101,10 +99,8 @@ struct TStorageGroupSchema {
   3: optional i32 schemaReplicationFactor
   4: optional i32 dataReplicationFactor
   5: optional i64 timePartitionInterval
-  6: optional i32 maximumSchemaRegionCount
-  7: optional i32 maximumDataRegionCount
-  8: optional list<common.TConsensusGroupId> dataRegionGroupIds
-  9: optional list<common.TConsensusGroupId> schemaRegionGroupIds
+  6: optional i32 maxSchemaRegionGroupCount
+  7: optional i32 maxDataRegionGroupCount
 }
 
 // Schema
@@ -199,7 +195,9 @@ struct TConfigNodeRegisterReq {
   6: required i64 defaultTTL
   7: required i64 timePartitionInterval
   8: required i32 schemaReplicationFactor
-  9: required i32 dataReplicationFactor
+  9: required double schemaRegionPerDataNode
+  10: required i32 dataReplicationFactor
+  11: required double dataRegionPerProcessor
 }
 
 struct TConfigNodeRegisterResp {
@@ -213,6 +211,7 @@ struct TClusterNodeInfos {
   1: required common.TSStatus status
   2: required list<common.TConfigNodeLocation> configNodeList
   3: required list<common.TDataNodeLocation> dataNodeList
+  4: required map<i32, string> nodeStatus
 }
 
 // UDF
@@ -226,11 +225,38 @@ struct TDropFunctionReq {
   1: required string udfName
 }
 
-service ConfigIService {
+// show regions
+struct TShowRegionReq {
+  1: optional common.TConsensusGroupType consensusGroupType;
+}
+
+struct TShowRegionResp {
+  1: required common.TSStatus status
+  2: optional list<common.TRegionInfo> regionInfoList;
+}
+
+// show datanodes
+struct TShowDataNodesResp {
+  1: required common.TSStatus status
+  2: optional list<common.TDataNodesInfo> dataNodesInfoList
+}
+
+struct TRegionRouteMapResp {
+  1: required common.TSStatus status
+  // For version stamp
+  2: optional i64 timestamp
+  // The routing policy of read/write requests for each RegionGroup is based on the order in the TRegionReplicaSet.
+  // The replica with higher sorting result in TRegionReplicaSet will have higher priority.
+  3: optional map<common.TConsensusGroupId, common.TRegionReplicaSet> regionRouteMap
+}
+
+service IConfigNodeRPCService {
 
   /* DataNode */
 
   TDataNodeRegisterResp registerDataNode(TDataNodeRegisterReq req)
+
+  common.TSStatus activeDataNode(TDataNodeActiveReq req)
 
   TDataNodeInfoResp getDataNodeInfo(i32 dataNodeId)
 
@@ -245,7 +271,7 @@ service ConfigIService {
 
   common.TSStatus deleteStorageGroups(TDeleteStorageGroupsReq req)
 
-  common.TSStatus setTTL(TSetTTLReq req)
+  common.TSStatus setTTL(common.TSetTTLReq req)
 
   common.TSStatus setSchemaReplicationFactor(TSetSchemaReplicationFactorReq req)
 
@@ -287,11 +313,39 @@ service ConfigIService {
 
   TConfigNodeRegisterResp registerConfigNode(TConfigNodeRegisterReq req)
 
-  common.TSStatus applyConfigNode(common.TConfigNodeLocation configNodeLocation)
+  common.TSStatus addConsensusGroup(TConfigNodeRegisterResp req)
+
+  common.TSStatus notifyRegisterSuccess()
+
+  common.TSStatus removeConfigNode(common.TConfigNodeLocation configNodeLocation)
+
+  common.TSStatus stopConfigNode(common.TConfigNodeLocation configNodeLocation)
 
   /* UDF */
 
   common.TSStatus createFunction(TCreateFunctionReq req)
 
   common.TSStatus dropFunction(TDropFunctionReq req)
+
+  /* Flush */
+
+  common.TSStatus flush(common.TFlushReq req)
+
+  /* Show Region */
+
+  TShowRegionResp showRegion(TShowRegionReq req)
+
+  /* Routing */
+
+  TRegionRouteMapResp getLatestRegionRouteMap()
+
+  /* Get confignode heartbeat */
+
+  i64 getConfigNodeHeartBeat(i64 timestamp)
+
+  /* Show DataNodes */
+
+  TShowDataNodesResp showDataNodes()
+
 }
+
