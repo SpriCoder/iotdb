@@ -173,7 +173,8 @@ public class CrossSpaceCompactionTask extends AbstractCompactionTask {
         LOGGER.error(
             "{}-{} [Compaction] Meet errors in cross space compaction.",
             storageGroupName,
-            dataRegionId);
+            dataRegionId,
+            throwable);
       } else {
         LOGGER.warn("{}-{} [Compaction] Compaction interrupted", storageGroupName, dataRegionId);
         // clean the interrupted flag
@@ -273,7 +274,6 @@ public class CrossSpaceCompactionTask extends AbstractCompactionTask {
   private void deleteOldFiles(List<TsFileResource> tsFileResourceList) throws IOException {
     for (TsFileResource tsFileResource : tsFileResourceList) {
       FileReaderManager.getInstance().closeFileAndRemoveReader(tsFileResource.getTsFilePath());
-      tsFileResource.setStatus(TsFileResourceStatus.DELETED);
       tsFileResource.remove();
       LOGGER.info(
           "[CrossSpaceCompaction] Delete TsFile :{}.",

@@ -19,7 +19,7 @@
 package org.apache.iotdb.db.it;
 
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.env.IoTDBTestRunner;
+import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
@@ -1066,6 +1066,7 @@ public class IoTDBSimpleQueryIT {
   }
 
   @Test
+  @Ignore // disable align is not supported yet
   public void testDisableAlign() throws Exception {
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {

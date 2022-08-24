@@ -18,6 +18,11 @@
  */
 package org.apache.iotdb.confignode.manager.load.heartbeat;
 
+import org.apache.iotdb.common.rpc.thrift.TConsensusGroupId;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,9 +31,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class RegionGroupCache implements IRegionGroupCache {
 
+  private static final Logger LOGGER = LoggerFactory.getLogger(RegionGroupCache.class);
+
   // TODO: This class might be split into SchemaRegionGroupCache and DataRegionGroupCache
 
   private static final int maximumWindowSize = 100;
+
+  private final TConsensusGroupId consensusGroupId;
+
   // Map<DataNodeId(where a RegionReplica resides), LinkedList<RegionHeartbeatSample>>
   private final Map<Integer, LinkedList<RegionHeartbeatSample>> slidingWindow;
 
@@ -37,7 +47,9 @@ public class RegionGroupCache implements IRegionGroupCache {
   // The DataNode where the leader resides
   private final AtomicInteger leaderDataNodeId;
 
-  public RegionGroupCache() {
+  public RegionGroupCache(TConsensusGroupId consensusGroupId) {
+    this.consensusGroupId = consensusGroupId;
+
     this.slidingWindow = new ConcurrentHashMap<>();
 
     this.versionTimestamp = new AtomicLong(0);
@@ -68,6 +80,7 @@ public class RegionGroupCache implements IRegionGroupCache {
   public boolean updateLoadStatistic() {
     long updateVersion = Long.MIN_VALUE;
     int updateLeaderDataNodeId = -1;
+    int originLeaderDataNodeId = leaderDataNodeId.get();
 
     synchronized (slidingWindow) {
       for (LinkedList<RegionHeartbeatSample> samples : slidingWindow.values()) {
@@ -82,15 +95,21 @@ public class RegionGroupCache implements IRegionGroupCache {
     }
 
     if (updateVersion > versionTimestamp.get()) {
+      // Only update when the leadership information is latest
       versionTimestamp.set(updateVersion);
       leaderDataNodeId.set(updateLeaderDataNodeId);
-      return true;
     }
-    return false;
+
+    return originLeaderDataNodeId != leaderDataNodeId.get();
   }
 
   @Override
   public int getLeaderDataNodeId() {
     return leaderDataNodeId.get();
+  }
+
+  @Override
+  public TConsensusGroupId getConsensusGroupId() {
+    return consensusGroupId;
   }
 }

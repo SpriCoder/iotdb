@@ -20,7 +20,7 @@ package org.apache.iotdb.db.it.aligned;
 
 import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.env.IoTDBTestRunner;
+import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
@@ -37,12 +37,8 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 import static org.apache.iotdb.db.constant.TestConstant.avg;
 import static org.apache.iotdb.db.constant.TestConstant.count;
@@ -53,13 +49,9 @@ import static org.apache.iotdb.db.constant.TestConstant.maxValue;
 import static org.apache.iotdb.db.constant.TestConstant.minTime;
 import static org.apache.iotdb.db.constant.TestConstant.minValue;
 import static org.apache.iotdb.db.constant.TestConstant.sum;
-import static org.apache.iotdb.itbase.constant.TestConstant.DATA_TYPE_STR;
-import static org.apache.iotdb.itbase.constant.TestConstant.TIMESEIRES_STR;
 import static org.apache.iotdb.itbase.constant.TestConstant.TIMESTAMP_STR;
-import static org.apache.iotdb.itbase.constant.TestConstant.VALUE_STR;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(IoTDBTestRunner.class)
@@ -70,15 +62,18 @@ public class IoTDBAlignedSeriesQueryIT {
   protected static boolean enableSeqSpaceCompaction;
   protected static boolean enableUnseqSpaceCompaction;
   protected static boolean enableCrossSpaceCompaction;
+  protected static int maxTsBlockLineNumber;
 
   @BeforeClass
   public static void setUp() throws Exception {
     enableSeqSpaceCompaction = ConfigFactory.getConfig().isEnableSeqSpaceCompaction();
     enableUnseqSpaceCompaction = ConfigFactory.getConfig().isEnableUnseqSpaceCompaction();
     enableCrossSpaceCompaction = ConfigFactory.getConfig().isEnableCrossSpaceCompaction();
+    maxTsBlockLineNumber = ConfigFactory.getConfig().getMaxTsBlockLineNumber();
     ConfigFactory.getConfig().setEnableSeqSpaceCompaction(false);
     ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(false);
     ConfigFactory.getConfig().setEnableCrossSpaceCompaction(false);
+    ConfigFactory.getConfig().setMaxTsBlockLineNumber(3);
     EnvFactory.getEnv().initBeforeClass();
     AlignedWriteUtil.insertData();
   }
@@ -89,260 +84,7 @@ public class IoTDBAlignedSeriesQueryIT {
     ConfigFactory.getConfig().setEnableSeqSpaceCompaction(enableSeqSpaceCompaction);
     ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(enableUnseqSpaceCompaction);
     ConfigFactory.getConfig().setEnableCrossSpaceCompaction(enableCrossSpaceCompaction);
-  }
-
-  // ----------------------------------------Last Query-----------------------------------------
-  @Test
-  public void selectAllAlignedLastTest() {
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList(
-                "23,root.sg1.d1.s1,230000.0,FLOAT",
-                "40,root.sg1.d1.s2,40,INT32",
-                "30,root.sg1.d1.s3,30,INT64",
-                "30,root.sg1.d1.s4,false,BOOLEAN",
-                "40,root.sg1.d1.s5,aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet = statement.executeQuery("select last * from root.sg1.d1")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectAllAlignedAndNonAlignedLastTest() {
-
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList(
-                "23,root.sg1.d1.s1,230000.0,FLOAT",
-                "40,root.sg1.d1.s2,40,INT32",
-                "30,root.sg1.d1.s3,30,INT64",
-                "30,root.sg1.d1.s4,false,BOOLEAN",
-                "40,root.sg1.d1.s5,aligned_test40,TEXT",
-                "20,root.sg1.d2.s1,20.0,FLOAT",
-                "40,root.sg1.d2.s2,40,INT32",
-                "30,root.sg1.d2.s3,30,INT64",
-                "30,root.sg1.d2.s4,false,BOOLEAN",
-                "40,root.sg1.d2.s5,non_aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet = statement.executeQuery("select last * from root.sg1.*")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectAllAlignedLastWithTimeFilterTest() {
-
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList("40,root.sg1.d1.s2,40,INT32", "40,root.sg1.d1.s5,aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet =
-          statement.executeQuery("select last * from root.sg1.d1 where time > 30")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectSomeAlignedLastTest1() {
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList(
-                "23,root.sg1.d1.s1,230000.0,FLOAT",
-                "30,root.sg1.d1.s4,false,BOOLEAN",
-                "40,root.sg1.d1.s5,aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet =
-          statement.executeQuery("select last s1, s4, s5 from root.sg1.d1")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectSomeAlignedLastTest2() {
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList("23,root.sg1.d1.s1,230000.0,FLOAT", "30,root.sg1.d1.s4,false,BOOLEAN"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet = statement.executeQuery("select last s1, s4 from root.sg1.d1")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectSomeAlignedLastWithTimeFilterTest() {
-
-    Set<String> retSet =
-        new HashSet<>(Collections.singletonList("40,root.sg1.d1.s5,aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      try (ResultSet resultSet =
-          statement.executeQuery("select last s1, s4, s5 from root.sg1.d1 where time > 30")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void selectSomeAlignedAndNonAlignedLastWithTimeFilterTest() {
-
-    Set<String> retSet =
-        new HashSet<>(
-            Arrays.asList(
-                "40,root.sg1.d1.s5,aligned_test40,TEXT",
-                "40,root.sg1.d2.s5,non_aligned_test40,TEXT"));
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      // 1 4 5
-      try (ResultSet resultSet =
-          statement.executeQuery(
-              "select last d2.s5, d1.s4, d2.s1, d1.s5, d2.s4, d1.s1 from root.sg1 where time > 30")) {
-        int cnt = 0;
-        while (resultSet.next()) {
-          String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(TIMESEIRES_STR)
-                  + ","
-                  + resultSet.getString(VALUE_STR)
-                  + ","
-                  + resultSet.getString(DATA_TYPE_STR);
-          assertTrue(ans, retSet.contains(ans));
-          cnt++;
-        }
-        assertEquals(retSet.size(), cnt);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-      fail(e.getMessage());
-    }
+    ConfigFactory.getConfig().setMaxTsBlockLineNumber(maxTsBlockLineNumber);
   }
 
   // ------------------------------Raw Query Without Value Filter----------------------------------

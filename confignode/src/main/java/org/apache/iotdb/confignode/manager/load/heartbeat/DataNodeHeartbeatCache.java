@@ -20,31 +20,22 @@ package org.apache.iotdb.confignode.manager.load.heartbeat;
 
 import org.apache.iotdb.commons.cluster.NodeStatus;
 
-import java.util.LinkedList;
-
 /** DataNodeHeartbeatCache caches and maintains all the heartbeat data */
-public class DataNodeHeartbeatCache implements INodeCache {
+public class DataNodeHeartbeatCache extends BaseNodeCache {
 
-  // TODO: This class might be split into DataNodeCache and ConfigNodeCache
-
-  // Cache heartbeat samples
-  private static final int maximumWindowSize = 100;
-  private final LinkedList<NodeHeartbeatSample> slidingWindow;
-
-  // For guiding queries, the higher the score the higher the load
-  private volatile float loadScore;
-  // For showing cluster
-  private volatile NodeStatus status;
+  /** For guiding queries, the higher the score the higher the load */
+  private volatile long loadScore;
 
   public DataNodeHeartbeatCache() {
-    this.slidingWindow = new LinkedList<>();
-
     this.loadScore = 0;
-    this.status = NodeStatus.Running;
   }
 
   @Override
   public void cacheHeartbeatSample(NodeHeartbeatSample newHeartbeatSample) {
+    if (isRemoving()) {
+      return;
+    }
+
     synchronized (slidingWindow) {
       // Only sequential HeartbeatSamples are accepted.
       // And un-sequential HeartbeatSamples will be discarded.
@@ -53,7 +44,7 @@ public class DataNodeHeartbeatCache implements INodeCache {
         slidingWindow.add(newHeartbeatSample);
       }
 
-      if (slidingWindow.size() > maximumWindowSize) {
+      if (slidingWindow.size() > MAXIMUM_WINDOW_SIZE) {
         slidingWindow.removeFirst();
       }
     }
@@ -61,6 +52,10 @@ public class DataNodeHeartbeatCache implements INodeCache {
 
   @Override
   public boolean updateLoadStatistic() {
+    if (isRemoving()) {
+      return false;
+    }
+
     long lastSendTime = 0;
     synchronized (slidingWindow) {
       if (slidingWindow.size() > 0) {
@@ -68,6 +63,12 @@ public class DataNodeHeartbeatCache implements INodeCache {
       }
     }
 
+    /* Update loadScore */
+    if (lastSendTime > 0) {
+      loadScore = -lastSendTime;
+    }
+
+    /* Update Node status */
     NodeStatus originStatus;
     switch (status) {
       case Running:
@@ -79,7 +80,7 @@ public class DataNodeHeartbeatCache implements INodeCache {
     }
 
     // TODO: Optimize judge logic
-    if (System.currentTimeMillis() - lastSendTime > 20_000) {
+    if (System.currentTimeMillis() - lastSendTime > HEARTBEAT_TIMEOUT_TIME) {
       status = NodeStatus.Unknown;
     } else {
       status = NodeStatus.Running;
@@ -88,7 +89,11 @@ public class DataNodeHeartbeatCache implements INodeCache {
   }
 
   @Override
-  public float getLoadScore() {
+  public long getLoadScore() {
+    if (isRemoving()) {
+      return Long.MAX_VALUE;
+    }
+
     // Return a copy of loadScore
     switch (status) {
       case Running:
@@ -96,12 +101,16 @@ public class DataNodeHeartbeatCache implements INodeCache {
       case Unknown:
       default:
         // The Unknown Node will get the highest loadScore
-        return Float.MAX_VALUE;
+        return Long.MAX_VALUE;
     }
   }
 
   @Override
   public NodeStatus getNodeStatus() {
+    if (isRemoving()) {
+      return NodeStatus.Removing;
+    }
+
     // Return a copy of status
     switch (status) {
       case Running:

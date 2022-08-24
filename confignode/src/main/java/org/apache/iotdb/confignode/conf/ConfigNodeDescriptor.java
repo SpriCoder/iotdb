@@ -22,6 +22,8 @@ import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.BadNodeUrlException;
 import org.apache.iotdb.commons.utils.NodeUrlUtils;
+import org.apache.iotdb.confignode.manager.load.balancer.RegionBalancer;
+import org.apache.iotdb.confignode.manager.load.balancer.RouteBalancer;
 import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
 
 import org.slf4j.Logger;
@@ -159,17 +161,21 @@ public class ConfigNodeDescriptor {
               properties.getProperty(
                   "data_region_per_processor", String.valueOf(conf.getDataRegionPerProcessor()))));
 
+      try {
+        conf.setRegionAllocateStrategy(
+            RegionBalancer.RegionAllocateStrategy.valueOf(
+                properties.getProperty(
+                    "region_allocate_strategy", conf.getRegionAllocateStrategy().name())));
+      } catch (IllegalArgumentException e) {
+        LOGGER.warn(
+            "The configured region allocate strategy does not exist, use the default: GREEDY!");
+      }
+
       conf.setRpcAdvancedCompressionEnable(
           Boolean.parseBoolean(
               properties.getProperty(
                   "rpc_advanced_compression_enable",
                   String.valueOf(conf.isRpcAdvancedCompressionEnable()))));
-
-      conf.setRpcThriftCompressionEnabled(
-          Boolean.parseBoolean(
-              properties.getProperty(
-                  "rpc_thrift_compression_enable",
-                  String.valueOf(conf.isRpcThriftCompressionEnabled()))));
 
       conf.setRpcMaxConcurrentClientNum(
           Integer.parseInt(
@@ -186,17 +192,6 @@ public class ConfigNodeDescriptor {
           Integer.parseInt(
               properties.getProperty(
                   "thrift_max_frame_size", String.valueOf(conf.getThriftMaxFrameSize()))));
-
-      conf.setConnectionTimeoutInMS(
-          Integer.parseInt(
-              properties.getProperty(
-                  "connection_timeout_ms", String.valueOf(conf.getConnectionTimeoutInMS()))));
-
-      conf.setSelectorNumOfClientManager(
-          Integer.parseInt(
-              properties.getProperty(
-                  "selector_thread_nums_of_client_manager",
-                  String.valueOf(conf.getSelectorNumOfClientManager()))));
 
       conf.setSystemDir(properties.getProperty("system_dir", conf.getSystemDir()));
 
@@ -227,7 +222,27 @@ public class ConfigNodeDescriptor {
               properties.getProperty(
                   "heartbeat_interval", String.valueOf(conf.getHeartbeatInterval()))));
 
-      conf.setRoutingPolicy(properties.getProperty("routing_policy", conf.getRoutingPolicy()));
+      String routingPolicy = properties.getProperty("routing_policy", conf.getRoutingPolicy());
+      if (routingPolicy.equals(RouteBalancer.GREEDY_POLICY)
+          || routingPolicy.equals(RouteBalancer.LEADER_POLICY)) {
+        conf.setRoutingPolicy(routingPolicy);
+      } else {
+        throw new IOException(
+            String.format(
+                "Unknown routing_policy: %s, please set to \"leader\" or \"greedy\"",
+                routingPolicy));
+      }
+
+      String readConsistencyLevel =
+          properties.getProperty("read_consistency_level", conf.getReadConsistencyLevel());
+      if (readConsistencyLevel.equals("strong") || readConsistencyLevel.equals("weak")) {
+        conf.setReadConsistencyLevel(readConsistencyLevel);
+      } else {
+        throw new IOException(
+            String.format(
+                "Unknown read_consistency_level: %s, please set to \"strong\" or \"weak\"",
+                readConsistencyLevel));
+      }
 
       // commons
       commonDescriptor.loadCommonProps(properties);

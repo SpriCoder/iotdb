@@ -198,4 +198,39 @@ public class MppConfig implements BaseConfig {
         "avg_series_point_number_threshold", String.valueOf(avgSeriesPointNumberThreshold));
     return this;
   }
+
+  @Override
+  public BaseConfig setMaxTsBlockLineNumber(int maxTsBlockLineNumber) {
+    engineProperties.setProperty("max_tsblock_line_number", String.valueOf(maxTsBlockLineNumber));
+    return this;
+  }
+
+  @Override
+  public BaseConfig setConfigNodeConsesusProtocolClass(String configNodeConsesusProtocolClass) {
+    confignodeProperties.setProperty(
+        "config_node_consensus_protocol_class", configNodeConsesusProtocolClass);
+    return this;
+  }
+
+  @Override
+  public BaseConfig setSchemaRegionConsensusProtocolClass(
+      String schemaRegionConsensusProtocolClass) {
+    confignodeProperties.setProperty(
+        "schema_region_consensus_protocol_class", schemaRegionConsensusProtocolClass);
+    return this;
+  }
+
+  @Override
+  public BaseConfig setDataRegionConsensusProtocolClass(String dataRegionConsensusProtocolClass) {
+    confignodeProperties.setProperty(
+        "data_region_consensus_protocol_class", dataRegionConsensusProtocolClass);
+    return this;
+  }
+
+  @Override
+  public BaseConfig setTimePartitionInterval(long timePartitionInterval) {
+    confignodeProperties.setProperty(
+        "time_partition_interval", String.valueOf(timePartitionInterval));
+    return this;
+  }
 }

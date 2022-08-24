@@ -19,33 +19,48 @@
 
 package org.apache.iotdb.db.mpp.execution.operator.schema;
 
-import org.apache.iotdb.db.mpp.common.header.HeaderConstant;
+import org.apache.iotdb.common.rpc.thrift.TSchemaNode;
+import org.apache.iotdb.db.metadata.mnode.MNodeType;
+import org.apache.iotdb.db.mpp.common.header.ColumnHeader;
+import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.db.mpp.execution.operator.Operator;
 import org.apache.iotdb.db.mpp.execution.operator.OperatorContext;
 import org.apache.iotdb.db.mpp.execution.operator.process.ProcessOperator;
+import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.read.common.block.TsBlock;
 import org.apache.iotdb.tsfile.read.common.block.TsBlockBuilder;
 import org.apache.iotdb.tsfile.utils.Binary;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import static java.util.Objects.requireNonNull;
+import static org.apache.iotdb.tsfile.read.common.block.TsBlockBuilderStatus.DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES;
 
 public class NodeManageMemoryMergeOperator implements ProcessOperator {
   private final OperatorContext operatorContext;
-  private final Set<String> data;
+  private final Set<TSchemaNode> data;
+  private final Set<String> nameSet;
   private final Operator child;
   private boolean isReadingMemory;
+  private final List<TSDataType> outputDataTypes;
 
   public NodeManageMemoryMergeOperator(
-      OperatorContext operatorContext, Set<String> data, Operator child) {
+      OperatorContext operatorContext, Set<TSchemaNode> data, Operator child) {
     this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
     this.data = data;
+    nameSet = data.stream().map(schemaNode -> schemaNode.getNodeName()).collect(Collectors.toSet());
     this.child = requireNonNull(child, "child operator is null");
     isReadingMemory = true;
+    this.outputDataTypes =
+        ColumnHeaderConstant.showChildPathsColumnHeaders.stream()
+            .map(ColumnHeader::getColumnType)
+            .collect(Collectors.toList());
   }
 
   @Override
@@ -69,27 +84,41 @@ public class NodeManageMemoryMergeOperator implements ProcessOperator {
         return null;
       }
 
-      Set<String> nodePaths = new TreeSet<>();
-      String nodePath;
+      Set<TSchemaNode> nodePaths = new HashSet<>();
       for (int i = 0; i < block.getPositionCount(); i++) {
-        nodePath = block.getColumn(0).getBinary(i).toString();
-        if (!data.contains(nodePath)) {
-          nodePaths.add(nodePath);
-          data.add(nodePath);
+        TSchemaNode schemaNode =
+            new TSchemaNode(
+                block.getColumn(0).getBinary(i).toString(),
+                Byte.parseByte(block.getColumn(1).getBinary(i).toString()));
+        if (!nameSet.contains(schemaNode.getNodeName())) {
+          nodePaths.add(schemaNode);
+          nameSet.add(schemaNode.getNodeName());
         }
       }
       return transferToTsBlock(nodePaths);
     }
   }
 
-  private TsBlock transferToTsBlock(Set<String> nodePaths) {
-    TsBlockBuilder tsBlockBuilder =
-        new TsBlockBuilder(HeaderConstant.showChildPathsHeader.getRespDataTypes());
-
-    nodePaths.forEach(
-        path -> {
+  private TsBlock transferToTsBlock(Set<TSchemaNode> nodePaths) {
+    TsBlockBuilder tsBlockBuilder = new TsBlockBuilder(outputDataTypes);
+    // sort by node type
+    Set<TSchemaNode> sortSet =
+        new TreeSet<>(
+            (o1, o2) -> {
+              if (o1.getNodeType() == o2.getNodeType()) {
+                return o1.getNodeName().compareTo(o2.getNodeName());
+              }
+              return o1.getNodeType() - o2.getNodeType();
+            });
+    sortSet.addAll(nodePaths);
+    sortSet.forEach(
+        node -> {
           tsBlockBuilder.getTimeColumnBuilder().writeLong(0L);
-          tsBlockBuilder.getColumnBuilder(0).writeBinary(new Binary(path));
+          tsBlockBuilder.getColumnBuilder(0).writeBinary(new Binary(node.getNodeName()));
+          tsBlockBuilder
+              .getColumnBuilder(1)
+              .writeBinary(
+                  new Binary(MNodeType.getMNodeType(node.getNodeType()).getNodeTypeName()));
           tsBlockBuilder.declarePosition();
         });
     return tsBlockBuilder.build();
@@ -108,5 +137,22 @@ public class NodeManageMemoryMergeOperator implements ProcessOperator {
   @Override
   public boolean isFinished() {
     return !isReadingMemory && child.isFinished();
+  }
+
+  @Override
+  public long calculateMaxPeekMemory() {
+    // todo calculate the result based on all the scan node; currently, this is shadowed by
+    // schemaQueryMergeNode
+    return Math.max(2L * DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES, child.calculateMaxPeekMemory());
+  }
+
+  @Override
+  public long calculateMaxReturnSize() {
+    return Math.max(DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES, child.calculateMaxReturnSize());
+  }
+
+  @Override
+  public long calculateRetainedSizeAfterCallingNext() {
+    return DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES + child.calculateRetainedSizeAfterCallingNext();
   }
 }

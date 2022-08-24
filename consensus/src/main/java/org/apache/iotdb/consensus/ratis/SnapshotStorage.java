@@ -90,7 +90,21 @@ public class SnapshotStorage implements StateMachineStorage {
     if (snapshots == null || snapshots.length == 0) {
       return null;
     }
-    return snapshots[snapshots.length - 1].toFile();
+    int i = snapshots.length - 1;
+    for (; i >= 0; i--) {
+      String metafilePath =
+          getMetafilePath(snapshots[i].toFile(), snapshots[i].getFileName().toString());
+      if (new File(metafilePath).exists()) {
+        break;
+      } else {
+        try {
+          FileUtils.deleteFully(snapshots[i]);
+        } catch (IOException e) {
+          logger.warn("delete incomplete snapshot directory {} failed due to {}", snapshots[i], e);
+        }
+      }
+    }
+    return i < 0 ? null : snapshots[i].toFile();
   }
 
   private List<Path> getAllFilesUnder(File rootDir) {
@@ -143,6 +157,9 @@ public class SnapshotStorage implements StateMachineStorage {
 
     List<FileInfo> fileInfos = new ArrayList<>();
     for (Path file : getAllFilesUnder(latestSnapshotDir)) {
+      if (file.endsWith(".md5")) {
+        continue;
+      }
       FileInfo fileInfo = new FileInfoWithDelayedMd5Computing(file);
       fileInfos.add(fileInfo);
     }

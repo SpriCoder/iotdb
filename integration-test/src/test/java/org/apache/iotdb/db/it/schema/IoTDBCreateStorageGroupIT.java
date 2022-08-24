@@ -19,8 +19,9 @@
 
 package org.apache.iotdb.db.it.schema;
 
+import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.env.IoTDBTestRunner;
+import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
@@ -93,7 +94,7 @@ public class IoTDBCreateStorageGroupIT {
     List<String> resultList = new ArrayList<>();
     try (ResultSet resultSet = statement.executeQuery("show storage group")) {
       while (resultSet.next()) {
-        String storageGroupPath = resultSet.getString("storage group");
+        String storageGroupPath = resultSet.getString(ColumnHeaderConstant.COLUMN_STORAGE_GROUP);
         resultList.add(storageGroupPath);
       }
     }

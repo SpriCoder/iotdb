@@ -20,12 +20,16 @@ package org.apache.iotdb.db.it.udf;
 
 import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.env.IoTDBTestRunner;
+import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 import org.apache.iotdb.itbase.constant.UDFTestConstant;
 
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
@@ -495,8 +499,11 @@ public class IoTDBUDFWindowQueryIT {
 
     sql =
         String.format(
-            "select window_start_end(s1, '%s'='%s') from root.vehicle.d1",
-            UDFTestConstant.TIME_INTERVAL_KEY, timeInterval);
+            "select window_start_end(s1, '%s'='%s', '%s'='%s') from root.vehicle.d1",
+            UDFTestConstant.ACCESS_STRATEGY_KEY,
+            UDFTestConstant.ACCESS_STRATEGY_SLIDING_TIME,
+            UDFTestConstant.TIME_INTERVAL_KEY,
+            timeInterval);
 
     try (Connection conn = EnvFactory.getEnv().getConnection();
         Statement statement = conn.createStatement();
