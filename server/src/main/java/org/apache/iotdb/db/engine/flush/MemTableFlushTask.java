@@ -42,7 +42,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
  * flush task to flush one memtable using a pipeline model to flush, which is sort memtable ->
@@ -126,13 +125,24 @@ public class MemTableFlushTask {
          * sort task (first task of flush pipeline)
          */
         series.sortTvListForFlush();
-        sortTime += System.currentTimeMillis() - startTime;
+        long usedTime = System.currentTimeMillis() - startTime;
+        MetricService.getInstance()
+            .histogram(
+                usedTime,
+                Metric.MEMTABLE.toString(),
+                MetricLevel.CORE,
+                Tag.TYPE.toString(),
+                "single");
+        sortTime += usedTime;
         encodingTaskQueue.put(series);
       }
 
       encodingTaskQueue.put(new EndChunkGroupIoTask());
     }
     encodingTaskQueue.put(new TaskEnd());
+    MetricService.getInstance()
+        .histogram(
+            sortTime, Metric.MEMTABLE.toString(), MetricLevel.CORE, Tag.TYPE.toString(), "all");
     LOGGER.debug(
         "Storage group {} memtable flushing into file {}: data sort time cost {} ms.",
         storageGroup,
@@ -162,11 +172,10 @@ public class MemTableFlushTask {
     }
 
     MetricService.getInstance()
-        .timer(
+        .histogram(
             System.currentTimeMillis() - start,
-            TimeUnit.MILLISECONDS,
             Metric.COST_TASK.toString(),
-            MetricLevel.IMPORTANT,
+            MetricLevel.CORE,
             Tag.NAME.toString(),
             "flush");
 

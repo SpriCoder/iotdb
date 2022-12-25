@@ -61,7 +61,8 @@ public enum Metric {
   REGION,
   SLOT,
   THRIFT_CONNECTIONS,
-  THRIFT_ACTIVE_THREADS;
+  THRIFT_ACTIVE_THREADS,
+  MEMTABLE;
 
   @Override
   public String toString() {
