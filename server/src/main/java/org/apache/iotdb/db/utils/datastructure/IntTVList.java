@@ -53,6 +53,9 @@ public abstract class IntTVList extends TVList {
         return new QuickIntTVList();
       case BACKWARD:
         return new BackIntTVList();
+      case PATIENCE:
+        return new PatienceIntTVList();
+      case TIM:
       default:
         return new TimIntTVList();
     }

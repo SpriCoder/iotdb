@@ -125,15 +125,7 @@ public class MemTableFlushTask {
          * sort task (first task of flush pipeline)
          */
         series.sortTvListForFlush();
-        long usedTime = System.currentTimeMillis() - startTime;
-        MetricService.getInstance()
-            .histogram(
-                usedTime,
-                Metric.MEMTABLE.toString(),
-                MetricLevel.CORE,
-                Tag.TYPE.toString(),
-                "single");
-        sortTime += usedTime;
+        sortTime += System.currentTimeMillis() - startTime;
         encodingTaskQueue.put(series);
       }
 
@@ -171,6 +163,13 @@ public class MemTableFlushTask {
       SystemInfo.getInstance().setEncodingFasterThanIo(ioTime >= memSerializeTime);
     }
 
+    MetricService.getInstance()
+        .histogram(
+            System.currentTimeMillis() - start - sortTime,
+            Metric.COST_TASK.toString(),
+            MetricLevel.CORE,
+            Tag.NAME.toString(),
+            "flush-no-sort");
     MetricService.getInstance()
         .histogram(
             System.currentTimeMillis() - start,
