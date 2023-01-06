@@ -18,6 +18,13 @@
  */
 package org.apache.iotdb.db.utils.datastructure;
 
+import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
+import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.TVLIST_SORT_ALGORITHM;
+
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.iotdb.db.rescon.PrimitiveArrayManager;
 import org.apache.iotdb.db.wal.buffer.IWALByteBufferView;
 import org.apache.iotdb.db.wal.utils.WALWriteUtils;
@@ -28,14 +35,6 @@ import org.apache.iotdb.tsfile.read.common.TimeRange;
 import org.apache.iotdb.tsfile.read.common.block.TsBlockBuilder;
 import org.apache.iotdb.tsfile.utils.BitMap;
 import org.apache.iotdb.tsfile.utils.TsPrimitiveType;
-
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-
-import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
-import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.TVLIST_SORT_ALGORITHM;
 
 public abstract class IntTVList extends TVList {
   // list of primitive array, add 1 when expanded -> int primitive array
@@ -55,6 +54,10 @@ public abstract class IntTVList extends TVList {
         return new BackIntTVList();
       case PATIENCE:
         return new PatienceIntTVList();
+      case CKSORT:
+        return new CKSortIntTVList();
+      case YSORT:
+        return new YsortIntTVList();
       case TIM:
       default:
         return new TimIntTVList();
