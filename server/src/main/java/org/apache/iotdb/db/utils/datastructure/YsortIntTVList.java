@@ -60,16 +60,16 @@ public class YsortIntTVList extends QuickIntTVList {
         // i == j partitioning into left and right subfiles has been completed
         if (getTime(j) >= mid_key) {
           // check the right subfile to ensure the first element, k[j] , the smallest
-          if (getTime(j) > getTime(j + 1)) {
+          if (j <= n - 1 && getTime(j) > getTime(j + 1)) {
             swap(j + 1, j);
             right_flag = true;
           }
         } else {
-          if (getTime(i - 1) > getTime(i)) {
+          if (i >= m + 1 && getTime(i - 1) > getTime(i)) {
             swap(i - 1, i);
             left_flag = true;
           }
-          if (getTime(i - 2) > getTime(i - 1)) {
+          if (i >= m + 2 && getTime(i - 2) > getTime(i - 1)) {
             swap(i - 1, i - 2);
           }
         }
@@ -91,7 +91,9 @@ public class YsortIntTVList extends QuickIntTVList {
       if (right_flag) {
         if (size == 3) {
           if (getTime(j + 1) > getTime(j + 2)) swap(j + 1, j + 2);
-        } else ysort(j + 1, n);
+        } else {
+          ysort(j + 1, n);
+        }
       }
     }
   }
