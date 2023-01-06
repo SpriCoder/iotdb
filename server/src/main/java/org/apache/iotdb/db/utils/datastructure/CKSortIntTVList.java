@@ -18,7 +18,15 @@
  */
 package org.apache.iotdb.db.utils.datastructure;
 
-public class CKSortIntTVList extends IntTVList {
+public class CKSortIntTVList extends QuickIntTVList {
+
+  private long[] tsDisorder;
+  private int[] vsDisorder;
+  private int disorderLen;
+
+  private long[] tsOrder;
+  private int[] vsOrder;
+  private int orderLen;
 
   @Override
   public void sort() {
@@ -30,19 +38,19 @@ public class CKSortIntTVList extends IntTVList {
 
   public void CKSort() {
     // construct the array
-    long[] ts = new long[rowCount];
-    int[] vs = new int[rowCount];
-    int orderLen = 0;
-    long[] tsDisorder = new long[rowCount];
-    int[] vsDisorder = new int[rowCount];
-    int disorderLen = 0;
+    tsOrder = new long[rowCount];
+    vsOrder = new int[rowCount];
+    orderLen = 0;
+    tsDisorder = new long[rowCount];
+    vsDisorder = new int[rowCount];
+    disorderLen = 0;
     int i = 0;
     while (i < rowCount) {
       long t = getTime(i);
       int v = getInt(i);
-      if ((orderLen != 0) && ts[orderLen - 1] > t) {
-        tsDisorder[disorderLen] = ts[orderLen - 1];
-        vsDisorder[disorderLen] = vs[orderLen - 1];
+      if ((orderLen != 0) && tsOrder[orderLen - 1] > t) {
+        tsDisorder[disorderLen] = tsOrder[orderLen - 1];
+        vsDisorder[disorderLen] = vsOrder[orderLen - 1];
         disorderLen++;
         orderLen--;
 
@@ -50,20 +58,20 @@ public class CKSortIntTVList extends IntTVList {
         vsDisorder[disorderLen] = v;
         disorderLen++;
       } else {
-        ts[orderLen] = t;
-        vs[orderLen] = v;
+        tsOrder[orderLen] = t;
+        vsOrder[orderLen] = v;
         orderLen++;
       }
       i++;
     }
     // sort the disorder pairs
-    QSort(tsDisorder, vsDisorder, 0, disorderLen - 1);
-    // merge the ts and ts2 back to timestamps
+    QSort(0, disorderLen - 1);
+    // merge the tsOrder and ts2 back to timestamps
     i = 0;
     int a = 0, b = 0;
     while (a < orderLen && b < disorderLen) {
-      if (ts[a] <= tsDisorder[b]) {
-        set(i, ts[a], vs[a]);
+      if (tsOrder[a] <= tsDisorder[b]) {
+        set(i, tsOrder[a], vsOrder[a]);
         a++;
       } else {
         set(i, tsDisorder[b], vsDisorder[b]);
@@ -72,57 +80,63 @@ public class CKSortIntTVList extends IntTVList {
       i++;
     }
     while (a < orderLen) {
-      set(i++, ts[a], vs[a]);
+      set(i++, tsOrder[a], vsOrder[a]);
       a++;
     }
     while (b < disorderLen) {
       set(i++, tsDisorder[b], vsDisorder[b]);
       b++;
     }
-    ts = null;
+    tsOrder = null;
+    vsOrder = null;
+    tsDisorder = null;
+    vsDisorder = null;
   }
 
-  private int partition(long[] ts, int[] vs, int low, int high) {
-    int gIndex = 0, pIndex = (low + high) / 2;
-    long pivot = ts[pIndex];
-    while (ts[gIndex] < pivot) {
-      gIndex++;
+  public int partition(int low, int high) {
+    int left = low, right = high, pIndex = (low + high) / 2;
+    long pivot = tsDisorder[pIndex];
+    while (tsDisorder[left] < pivot) {
+      left++;
     }
-    for (int j = gIndex; j <= high; j++) {
+    while (tsDisorder[right] > pivot) {
+      right--;
+    }
+    for (int j = left; j <= right; j++) {
       // If current element is greater than or equal to pivot
-      if (ts[j] < pivot) {
+      if (tsDisorder[j] < pivot) {
         // swap arr[i] and arr[j]
-        long t = ts[gIndex];
-        ts[gIndex] = ts[j];
-        ts[j] = t;
-        int v = vs[gIndex];
-        vs[gIndex] = vs[j];
-        vs[j] = v;
-        if (pIndex == gIndex) {
+        long t = tsDisorder[left];
+        tsDisorder[left] = tsDisorder[j];
+        tsDisorder[j] = t;
+        //                int v = vsDisorder[left];
+        //                vsDisorder[left] = vsDisorder[j];
+        //                vsDisorder[j] = v;
+        if (pIndex == left) {
           pIndex = j;
         }
-        gIndex++;
+        left++;
       }
     }
-    if (gIndex != pIndex) {
-      long t = ts[gIndex];
-      ts[gIndex] = ts[pIndex];
-      ts[pIndex] = t;
-      int v = vs[gIndex];
-      vs[gIndex] = vs[pIndex];
-      vs[pIndex] = v;
-      pIndex = gIndex;
+    if (left != pIndex) {
+      long t = tsDisorder[left];
+      tsDisorder[left] = tsDisorder[pIndex];
+      tsDisorder[pIndex] = t;
+      //            int v = vsDisorder[left];
+      //            vsDisorder[left] = vsDisorder[pIndex];
+      //            vsDisorder[pIndex] = v;
+      pIndex = left;
     }
     return pIndex;
   }
 
-  private void QSort(long[] ts, int[] vs, int low, int high) {
+  private void QSort(int low, int high) {
     if (low < high) {
       /* pi is partitioning index, arr[pi] is now at right place */
-      int pi = partition(ts, vs, low, high);
+      int pi = partition(low, high);
       // Recursively sort elements before partition and after partition
-      QSort(ts, vs, low, pi - 1);
-      QSort(ts, vs, pi + 1, high);
+      QSort(low, pi - 1);
+      QSort(pi + 1, high);
     }
   }
 
