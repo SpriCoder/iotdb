@@ -16,51 +16,101 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.utils.datastructure;
 
+import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
+
+import java.util.ArrayList;
+import java.util.List;
+
 public class CKSortIntTVList extends QuickIntTVList {
-
-  private long[] tsDisorder;
-  private int[] vsDisorder;
-  private int disorderLen;
-
-  private long[] tsOrder;
-  private int[] vsOrder;
-  private int orderLen;
+  protected List<long[]> tsOrder = new ArrayList<>();
+  protected List<int[]> vsOrder = new ArrayList<>();
+  protected int orderLen = 0;
+  protected List<long[]> tsDisorder = new ArrayList<>();
+  protected List<int[]> vsDisorder = new ArrayList<>();
+  protected int disorderLen = 0;
 
   @Override
   public void sort() {
     if (!sorted && rowCount >= 1) {
       CKSort();
+      clearSorted();
     }
     sorted = true;
   }
 
+  private void clearSorted() {
+    tsDisorder.clear();
+    tsOrder.clear();
+    vsDisorder.clear();
+    vsOrder.clear();
+  }
+
+  protected long getTs(List<long[]> ts, int index) {
+    int arrayIndex = index / ARRAY_SIZE;
+    int elementIndex = index % ARRAY_SIZE;
+    return ts.get(arrayIndex)[elementIndex];
+  }
+
+  protected int getVs(List<int[]> vs, int index) {
+    int arrayIndex = index / ARRAY_SIZE;
+    int elementIndex = index % ARRAY_SIZE;
+    return vs.get(arrayIndex)[elementIndex];
+  }
+
+  protected void setDisorder(int index, long t, int v) {
+    int arrayIndex = index / ARRAY_SIZE;
+    int elementIndex = index % ARRAY_SIZE;
+    tsDisorder.get(arrayIndex)[elementIndex] = t;
+    vsDisorder.get(arrayIndex)[elementIndex] = v;
+  }
+
+  protected void addOrder(long t, int v) {
+    int arrayIndex = orderLen / ARRAY_SIZE;
+    int elementIndex = orderLen % ARRAY_SIZE;
+    if (elementIndex == 0) {
+      tsOrder.add(new long[ARRAY_SIZE]);
+      vsOrder.add(new int[ARRAY_SIZE]);
+    }
+    tsOrder.get(arrayIndex)[elementIndex] = t;
+    vsOrder.get(arrayIndex)[elementIndex] = v;
+    orderLen++;
+  }
+
+  protected void addDisorder(long t, int v) {
+    int arrayIndex = disorderLen / ARRAY_SIZE;
+    int elementIndex = disorderLen % ARRAY_SIZE;
+    if (elementIndex == 0) {
+      tsDisorder.add(new long[ARRAY_SIZE]);
+      vsDisorder.add(new int[ARRAY_SIZE]);
+    }
+    tsDisorder.get(arrayIndex)[elementIndex] = t;
+    vsDisorder.get(arrayIndex)[elementIndex] = v;
+    disorderLen++;
+  }
+
+  protected void swapDisorder(int p, int q) {
+    long tp = getTs(tsDisorder, p);
+    long tq = getTs(tsDisorder, q);
+    int vp = getVs(vsDisorder, p);
+    int vq = getVs(vsDisorder, q);
+    setDisorder(p, tq, vq);
+    setDisorder(q, tp, vp);
+  }
+
   public void CKSort() {
-    // construct the array
-    tsOrder = new long[rowCount];
-    vsOrder = new int[rowCount];
-    orderLen = 0;
-    tsDisorder = new long[rowCount];
-    vsDisorder = new int[rowCount];
-    disorderLen = 0;
     int i = 0;
     while (i < rowCount) {
       long t = getTime(i);
       int v = getInt(i);
-      if ((orderLen != 0) && tsOrder[orderLen - 1] > t) {
-        tsDisorder[disorderLen] = tsOrder[orderLen - 1];
-        vsDisorder[disorderLen] = vsOrder[orderLen - 1];
-        disorderLen++;
+      if ((orderLen != 0) && getTs(tsOrder, orderLen - 1) > t) {
+        addDisorder(getTs(tsOrder, orderLen - 1), getVs(vsOrder, orderLen - 1));
+        addDisorder(t, v);
         orderLen--;
-
-        tsDisorder[disorderLen] = t;
-        vsDisorder[disorderLen] = v;
-        disorderLen++;
       } else {
-        tsOrder[orderLen] = t;
-        vsOrder[orderLen] = v;
-        orderLen++;
+        addOrder(t, v);
       }
       i++;
     }
@@ -70,48 +120,40 @@ public class CKSortIntTVList extends QuickIntTVList {
     i = 0;
     int a = 0, b = 0;
     while (a < orderLen && b < disorderLen) {
-      if (tsOrder[a] <= tsDisorder[b]) {
-        set(i, tsOrder[a], vsOrder[a]);
+      long ta = getTs(tsOrder, a), tb = getTs(tsDisorder, b);
+      if (ta <= tb) {
+        set(i, ta, getVs(vsOrder, a));
         a++;
       } else {
-        set(i, tsDisorder[b], vsDisorder[b]);
+        set(i, tb, getVs(vsDisorder, b));
         b++;
       }
       i++;
     }
     while (a < orderLen) {
-      set(i++, tsOrder[a], vsOrder[a]);
+      set(i++, getTs(tsOrder, a), getVs(vsOrder, a));
       a++;
     }
     while (b < disorderLen) {
-      set(i++, tsDisorder[b], vsDisorder[b]);
+      set(i++, getTs(tsDisorder, b), getVs(vsDisorder, b));
       b++;
     }
-    tsOrder = null;
-    vsOrder = null;
-    tsDisorder = null;
-    vsDisorder = null;
   }
 
   public int partition(int low, int high) {
     int left = low, right = high, pIndex = (low + high) / 2;
-    long pivot = tsDisorder[pIndex];
-    while (tsDisorder[left] < pivot) {
+    long pivot = getTs(tsDisorder, pIndex);
+    while (getTs(tsDisorder, left) < pivot) {
       left++;
     }
-    while (tsDisorder[right] > pivot) {
+    while (getTs(tsDisorder, right) > pivot) {
       right--;
     }
     for (int j = left; j <= right; j++) {
       // If current element is greater than or equal to pivot
-      if (tsDisorder[j] < pivot) {
+      if (getTs(tsDisorder, j) < pivot) {
         // swap arr[i] and arr[j]
-        long t = tsDisorder[left];
-        tsDisorder[left] = tsDisorder[j];
-        tsDisorder[j] = t;
-        //                int v = vsDisorder[left];
-        //                vsDisorder[left] = vsDisorder[j];
-        //                vsDisorder[j] = v;
+        swapDisorder(left, j);
         if (pIndex == left) {
           pIndex = j;
         }
@@ -119,12 +161,7 @@ public class CKSortIntTVList extends QuickIntTVList {
       }
     }
     if (left != pIndex) {
-      long t = tsDisorder[left];
-      tsDisorder[left] = tsDisorder[pIndex];
-      tsDisorder[pIndex] = t;
-      //            int v = vsDisorder[left];
-      //            vsDisorder[left] = vsDisorder[pIndex];
-      //            vsDisorder[pIndex] = v;
+      swapDisorder(left, pIndex);
       pIndex = left;
     }
     return pIndex;
