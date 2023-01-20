@@ -18,13 +18,13 @@
  */
 package org.apache.iotdb.db.utils.datastructure;
 
-import java.util.List;
-
 import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
+
+import java.util.List;
 
 public interface BackwardSort extends QuickSort {
 
-  double INVERSION_RATIOS_THRESHOLD = 0.004;
+  double INVERSION_RATIOS_THRESHOLD = 0.05;
 
   void setFromTmp(int src, int dest);
 
