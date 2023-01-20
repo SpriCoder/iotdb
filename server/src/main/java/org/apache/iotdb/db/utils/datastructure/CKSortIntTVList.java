@@ -24,7 +24,7 @@ import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
 import java.util.ArrayList;
 import java.util.List;
 
-public class CKSortIntTBVList extends QuickIntTVList {
+public class CKSortIntTVList extends QuickIntTVList {
   protected List<long[]> tsOrder = new ArrayList<>();
   protected List<int[]> vsOrder = new ArrayList<>();
   protected int orderLen = 0;
