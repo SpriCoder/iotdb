@@ -24,7 +24,7 @@ import static org.apache.iotdb.db.rescon.PrimitiveArrayManager.ARRAY_SIZE;
 import java.util.ArrayList;
 import java.util.List;
 
-public class CKSortIntTVList extends QuickIntTVList {
+public class CKSortIntTVList extends YsortIntTVList {
   protected List<long[]> tsOrder = new ArrayList<>();
   protected List<int[]> vsOrder = new ArrayList<>();
   protected int orderLen = 0;
@@ -35,7 +35,7 @@ public class CKSortIntTVList extends QuickIntTVList {
   @Override
   public void sort() {
     if (!sorted && rowCount >= 1) {
-      CKSort();
+      ckSort(0, rowCount - 1);
       clearSorted();
     }
     sorted = true;
@@ -65,6 +65,7 @@ public class CKSortIntTVList extends QuickIntTVList {
     int elementIndex = index % ARRAY_SIZE;
     tsDisorder.get(arrayIndex)[elementIndex] = t;
     vsDisorder.get(arrayIndex)[elementIndex] = v;
+    //        moves += 1;
   }
 
   protected void addOrder(long t, int v) {
@@ -77,6 +78,7 @@ public class CKSortIntTVList extends QuickIntTVList {
     tsOrder.get(arrayIndex)[elementIndex] = t;
     vsOrder.get(arrayIndex)[elementIndex] = v;
     orderLen++;
+    //        moves += 1;
   }
 
   protected void addDisorder(long t, int v) {
@@ -89,6 +91,7 @@ public class CKSortIntTVList extends QuickIntTVList {
     tsDisorder.get(arrayIndex)[elementIndex] = t;
     vsDisorder.get(arrayIndex)[elementIndex] = v;
     disorderLen++;
+    //        moves += 1;
   }
 
   protected void swapDisorder(int p, int q) {
@@ -100,9 +103,15 @@ public class CKSortIntTVList extends QuickIntTVList {
     setDisorder(q, tp, vp);
   }
 
-  public void CKSort() {
-    int i = 0;
-    while (i < rowCount) {
+  public void ckSort(int lo, int hi) {
+    tsOrder = new ArrayList<>();
+    vsOrder = new ArrayList<>();
+    orderLen = 0;
+    tsDisorder = new ArrayList<>();
+    vsDisorder = new ArrayList<>();
+    disorderLen = 0;
+    int i = lo;
+    while (i <= hi) {
       long t = getTime(i);
       int v = getInt(i);
       if ((orderLen != 0) && getTs(tsOrder, orderLen - 1) > t) {
@@ -115,9 +124,9 @@ public class CKSortIntTVList extends QuickIntTVList {
       i++;
     }
     // sort the disorder pairs
-    QSort(0, disorderLen - 1);
+    ckQSort(0, disorderLen - 1);
     // merge the tsOrder and ts2 back to timestamps
-    i = 0;
+    i = lo;
     int a = 0, b = 0;
     while (a < orderLen && b < disorderLen) {
       long ta = getTs(tsOrder, a), tb = getTs(tsDisorder, b);
@@ -138,9 +147,13 @@ public class CKSortIntTVList extends QuickIntTVList {
       set(i++, getTs(tsDisorder, b), getVs(vsDisorder, b));
       b++;
     }
+    tsOrder.clear();
+    vsOrder.clear();
+    tsDisorder.clear();
+    vsDisorder.clear();
   }
 
-  public int partition(int low, int high) {
+  public int ckPartition(int low, int high) {
     int left = low, right = high, pIndex = (low + high) / 2;
     long pivot = getTs(tsDisorder, pIndex);
     while (getTs(tsDisorder, left) < pivot) {
@@ -167,13 +180,13 @@ public class CKSortIntTVList extends QuickIntTVList {
     return pIndex;
   }
 
-  private void QSort(int low, int high) {
+  private void ckQSort(int low, int high) {
     if (low < high) {
       /* pi is partitioning index, arr[pi] is now at right place */
-      int pi = partition(low, high);
+      int pi = ckPartition(low, high);
       // Recursively sort elements before partition and after partition
-      QSort(low, pi - 1);
-      QSort(pi + 1, high);
+      ckQSort(low, pi - 1);
+      ckQSort(pi + 1, high);
     }
   }
 
