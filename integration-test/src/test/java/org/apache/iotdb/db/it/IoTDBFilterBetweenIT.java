@@ -19,9 +19,11 @@
 
 package org.apache.iotdb.db.it;
 
+import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
+import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -35,29 +37,31 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
+import static org.apache.iotdb.db.it.utils.TestUtils.resultSetEqualTest;
+import static org.apache.iotdb.itbase.constant.TestConstant.TIMESTAMP_STR;
 import static org.junit.Assert.fail;
 
 @RunWith(IoTDBTestRunner.class)
-@Category({ClusterIT.class}) // TODO After old StandAlone remove
+@Category({LocalStandaloneIT.class, ClusterIT.class})
 public class IoTDBFilterBetweenIT {
   protected static final int ITERATION_TIMES = 10;
 
   @BeforeClass
   public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().initClusterEnvironment();
     createTimeSeries();
     generateData();
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private static void createTimeSeries() {
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
-      statement.execute("SET STORAGE GROUP TO root.vehicle");
+      statement.execute("CREATE DATABASE root.vehicle");
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s1 with datatype=INT32,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s2 with datatype=INT32,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s3 with datatype=TEXT,encoding=PLAIN");
@@ -88,7 +92,7 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
@@ -103,7 +107,7 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
@@ -114,7 +118,7 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
@@ -129,7 +133,7 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
@@ -139,7 +143,7 @@ public class IoTDBFilterBetweenIT {
       query = "SELECT * FROM root.vehicle.d1 WHERE " + start + " BETWEEN time AND " + end;
       try (ResultSet rs = statement.executeQuery(query)) {
         Assert.assertTrue(rs.next());
-        Assert.assertEquals("1", rs.getString("Time"));
+        Assert.assertEquals("1", rs.getString(ColumnHeaderConstant.TIME));
         Assert.assertEquals("1", rs.getString("root.vehicle.d1.s1"));
         Assert.assertEquals("1", rs.getString("root.vehicle.d1.s2"));
         Assert.assertEquals("1", rs.getString("root.vehicle.d1.s3"));
@@ -149,7 +153,7 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start + 1; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
@@ -165,12 +169,42 @@ public class IoTDBFilterBetweenIT {
       try (ResultSet rs = statement.executeQuery(query)) {
         for (int i = start; i <= end; i++) {
           Assert.assertTrue(rs.next());
-          Assert.assertEquals(String.valueOf(i), rs.getString("Time"));
+          Assert.assertEquals(String.valueOf(i), rs.getString(ColumnHeaderConstant.TIME));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s1"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s2"));
           Assert.assertEquals(String.valueOf(i), rs.getString("root.vehicle.d1.s3"));
         }
       }
+
+      String[] expectedHeader =
+          new String[] {
+            TIMESTAMP_STR, "root.vehicle.d1.s1 BETWEEN 1 AND 2", "Time BETWEEN 0 AND 1"
+          };
+      String[] retArray = new String[] {"1,true,true,", "2,true,false,", "3,false,false,"};
+      resultSetEqualTest(
+          "select s1 between 1 and 2, time between 0 and 1 from root.vehicle.d1 where time between 1 and 3",
+          expectedHeader,
+          retArray);
+
+      expectedHeader = new String[] {TIMESTAMP_STR, "r1", "r2"};
+      retArray = new String[] {"1,true,true,", "2,true,false,", "3,false,false,"};
+      resultSetEqualTest(
+          "select s1 between 1 and 2 as r1, time between 0 and 1 as r2 from root.vehicle.d1 where time between 1 and 3",
+          expectedHeader,
+          retArray);
+
+      expectedHeader =
+          new String[] {TIMESTAMP_STR, "Device", "s1 BETWEEN 1 AND 2", "Time BETWEEN 0 AND 1"};
+      retArray =
+          new String[] {
+            "1,root.vehicle.d1,true,true,",
+            "2,root.vehicle.d1,true,false,",
+            "3,root.vehicle.d1,false,false,"
+          };
+      resultSetEqualTest(
+          "select s1 between 1 and 2, time between 0 and 1 from root.vehicle.* where time between 1 and 3 align by device",
+          expectedHeader,
+          retArray);
     } catch (SQLException e) {
       e.printStackTrace();
       Assert.fail(e.getMessage());

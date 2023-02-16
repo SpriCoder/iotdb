@@ -18,14 +18,17 @@
  */
 package org.apache.iotdb.db.mpp.plan.planner.plan;
 
+import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.commons.partition.DataPartition;
 import org.apache.iotdb.db.mpp.common.PlanFragmentId;
 import org.apache.iotdb.db.mpp.plan.analyze.TypeProvider;
+import org.apache.iotdb.db.mpp.plan.planner.SubPlanTypeExtractor;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.IPartitionRelatedNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNodeType;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.source.VirtualSourceNode;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
 import java.io.DataOutputStream;
@@ -36,8 +39,10 @@ import java.util.Objects;
 /** PlanFragment contains a sub-query of distributed query. */
 public class PlanFragment {
   // TODO once you add field for this class you need to change the serialize and deserialize methods
-  private PlanFragmentId id;
+  private final PlanFragmentId id;
   private PlanNode planNodeTree;
+
+  // map from output column name (for every node) to its datatype
   private TypeProvider typeProvider;
 
   // indicate whether this PlanFragment is the root of the whole Fragment-Plan-Tree or not
@@ -69,6 +74,10 @@ public class PlanFragment {
     this.typeProvider = typeProvider;
   }
 
+  public void generateTypeProvider(TypeProvider allTypes) {
+    this.typeProvider = SubPlanTypeExtractor.extractor(planNodeTree, allTypes);
+  }
+
   public boolean isRoot() {
     return isRoot;
   }
@@ -82,13 +91,20 @@ public class PlanFragment {
     return String.format("PlanFragment-%s", getId());
   }
 
-  // Every Fragment should only run in DataRegion.
+  // Every Fragment related with DataPartition should only run in one DataRegion.
   // But it can select any one of the Endpoint of the target DataRegion
   // In current version, one PlanFragment should contain at least one SourceNode,
   // and the DataRegions of all SourceNodes should be same in one PlanFragment.
   // So we can use the DataRegion of one SourceNode as the PlanFragment's DataRegion.
   public TRegionReplicaSet getTargetRegion() {
     return getNodeRegion(planNodeTree);
+  }
+
+  // If a Fragment is not related with DataPartition,
+  // it may be related with a specific DataNode.
+  // This method return the DataNodeLocation will offer execution of this Fragment.
+  public TDataNodeLocation getTargetLocation() {
+    return getNodeLocation(planNodeTree);
   }
 
   private TRegionReplicaSet getNodeRegion(PlanNode root) {
@@ -98,6 +114,19 @@ public class PlanFragment {
     for (PlanNode child : root.getChildren()) {
       TRegionReplicaSet result = getNodeRegion(child);
       if (result != null && result != DataPartition.NOT_ASSIGNED) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  private TDataNodeLocation getNodeLocation(PlanNode root) {
+    if (root instanceof VirtualSourceNode) {
+      return ((VirtualSourceNode) root).getDataNodeLocation();
+    }
+    for (PlanNode child : root.getChildren()) {
+      TDataNodeLocation result = getNodeLocation(child);
+      if (result != null) {
         return result;
       }
     }

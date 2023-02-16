@@ -19,6 +19,7 @@
 
 namespace java org.apache.iotdb.common.rpc.thrift
 namespace py iotdb.thrift.common
+namespace go common
 
 // Define a set of ip:port address
 struct TEndPoint {
@@ -35,7 +36,7 @@ struct TSStatus {
 }
 
 enum TConsensusGroupType {
-  PartitionRegion,
+  ConfigNodeRegion,
   DataRegion,
   SchemaRegion
 }
@@ -101,6 +102,10 @@ struct TFlushReq {
    2: optional list<string> storageGroups
 }
 
+struct TSettleReq {
+   1: required list<string> paths
+}
+
 // for node management
 struct TSchemaNode {
   1: required string nodeName
@@ -110,4 +115,29 @@ struct TSchemaNode {
 struct TSetTTLReq {
   1: required list<string> storageGroupPathPattern
   2: required i64 TTL
+}
+
+// for File
+struct TFile {
+  1: required string fileName
+  2: required binary file
+}
+
+struct TFilesResp {
+  1: required TSStatus status
+  2: required list<TFile> files
+}
+
+enum TAggregationType {
+  COUNT,
+  AVG,
+  SUM,
+  FIRST_VALUE,
+  LAST_VALUE,
+  MAX_TIME,
+  MIN_TIME,
+  MAX_VALUE,
+  MIN_VALUE,
+  EXTREME,
+  COUNT_IF
 }

@@ -18,51 +18,42 @@
  */
 package org.apache.iotdb.db.sync.transport.client;
 
-import org.apache.iotdb.commons.sync.SyncConstant;
-import org.apache.iotdb.db.sync.sender.pipe.IoTDBPipeSink;
+import org.apache.iotdb.commons.consensus.DataRegionId;
+import org.apache.iotdb.commons.sync.pipesink.IoTDBPipeSink;
+import org.apache.iotdb.commons.sync.pipesink.PipeSink;
+import org.apache.iotdb.db.engine.StorageEngine;
+import org.apache.iotdb.db.engine.storagegroup.DataRegion;
 import org.apache.iotdb.db.sync.sender.pipe.Pipe;
-import org.apache.iotdb.db.sync.sender.pipe.PipeSink;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
-import java.net.UnknownHostException;
 
 public class SyncClientFactory {
 
   private static final Logger logger = LoggerFactory.getLogger(SyncClientFactory.class);
 
-  public static ISyncClient createSyncClient(Pipe pipe, PipeSink pipeSink) {
+  public static ISyncClient createSyncClient(Pipe pipe, PipeSink pipeSink, String dataRegionId) {
+    DataRegion dataRegion =
+        StorageEngine.getInstance().getDataRegion(new DataRegionId(Integer.parseInt(dataRegionId)));
     switch (pipeSink.getType()) {
       case IoTDB:
         IoTDBPipeSink ioTDBPipeSink = (IoTDBPipeSink) pipeSink;
         return new IoTDBSyncClient(
-            pipe, ioTDBPipeSink.getIp(), ioTDBPipeSink.getPort(), getLocalIP(ioTDBPipeSink));
+            pipe, ioTDBPipeSink.getIp(), ioTDBPipeSink.getPort(), dataRegion.getDatabaseName());
       case ExternalPipe:
       default:
         throw new UnsupportedOperationException();
     }
   }
 
-  private static String getLocalIP(IoTDBPipeSink pipeSink) {
-    String localIP;
-    try {
-      InetAddress inetAddress = InetAddress.getLocalHost();
-      if (inetAddress.isLoopbackAddress()) {
-        try (final DatagramSocket socket = new DatagramSocket()) {
-          socket.connect(InetAddress.getByName(pipeSink.getIp()), pipeSink.getPort());
-          localIP = socket.getLocalAddress().getHostAddress();
-        }
-      } else {
-        localIP = inetAddress.getHostAddress();
-      }
-    } catch (UnknownHostException | SocketException e) {
-      logger.error("Get local host error when create transport handler.", e);
-      localIP = SyncConstant.UNKNOWN_IP;
+  public static ISyncClient createHeartbeatClient(Pipe pipe, PipeSink pipeSink) {
+    switch (pipeSink.getType()) {
+      case IoTDB:
+        IoTDBPipeSink ioTDBPipeSink = (IoTDBPipeSink) pipeSink;
+        return new IoTDBSyncClient(pipe, ioTDBPipeSink.getIp(), ioTDBPipeSink.getPort());
+      case ExternalPipe:
+      default:
+        throw new UnsupportedOperationException();
     }
-    return localIP;
   }
 }

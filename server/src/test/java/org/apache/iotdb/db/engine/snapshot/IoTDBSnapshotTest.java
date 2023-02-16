@@ -36,6 +36,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 import java.io.File;
 import java.io.IOException;
@@ -108,13 +109,46 @@ public class IoTDBSnapshotTest {
             snapshotDir.listFiles((dir, name) -> name.equals(SnapshotLogger.SNAPSHOT_LOG_NAME));
         Assert.assertEquals(1, files.length);
         SnapshotLogAnalyzer analyzer = new SnapshotLogAnalyzer(files[0]);
-        int cnt = 0;
-        while (analyzer.hasNext()) {
-          analyzer.getNextPairs();
-          cnt++;
-        }
+        Assert.assertTrue(analyzer.isSnapshotComplete());
+        int cnt = analyzer.getTotalFileCountInSnapshot();
         analyzer.close();
         Assert.assertEquals(200, cnt);
+        for (TsFileResource resource : resources) {
+          Assert.assertTrue(resource.tryWriteLock());
+        }
+      } finally {
+        FileUtils.recursiveDeleteFolder(snapshotDir.getAbsolutePath());
+      }
+    } finally {
+      IoTDBDescriptor.getInstance().getConfig().setDataDirs(originDataDirs);
+      DirectoryManager.getInstance().resetFolders();
+    }
+  }
+
+  @Test
+  public void testCreateSnapshotWithUnclosedTsFile()
+      throws IOException, WriteProcessException, DirectoryNotLegalException {
+    String[] originDataDirs = IoTDBDescriptor.getInstance().getConfig().getDataDirs();
+    IoTDBDescriptor.getInstance().getConfig().setDataDirs(testDataDirs);
+    DirectoryManager.getInstance().resetFolders();
+    try {
+      List<TsFileResource> resources = writeTsFiles();
+      resources.subList(50, 100).forEach(x -> x.setStatus(TsFileResourceStatus.UNCLOSED));
+      DataRegion region = new DataRegion(testSgName, "0");
+      region.getTsFileManager().addAll(resources, true);
+      File snapshotDir = new File("target" + File.separator + "snapshot");
+      Assert.assertTrue(snapshotDir.exists() || snapshotDir.mkdirs());
+      try {
+        new SnapshotTaker(region).takeFullSnapshot(snapshotDir.getAbsolutePath(), true);
+        File[] files =
+            snapshotDir.listFiles((dir, name) -> name.equals(SnapshotLogger.SNAPSHOT_LOG_NAME));
+        Assert.assertEquals(1, files.length);
+        SnapshotLogAnalyzer analyzer = new SnapshotLogAnalyzer(files[0]);
+        int cnt = 0;
+        Assert.assertTrue(analyzer.isSnapshotComplete());
+        cnt = analyzer.getTotalFileCountInSnapshot();
+        analyzer.close();
+        Assert.assertEquals(100, cnt);
         for (TsFileResource resource : resources) {
           Assert.assertTrue(resource.tryWriteLock());
         }
@@ -172,13 +206,18 @@ public class IoTDBSnapshotTest {
                 + "0"
                 + File.separator
                 + "1-1-0-0.tsfile");
+    DataRegion region = Mockito.mock(DataRegion.class);
+    Mockito.when(region.getDatabaseName()).thenReturn("root.test");
+    Mockito.when(region.getDataRegionId()).thenReturn("0");
     File snapshotFile =
-        new SnapshotTaker(null).getSnapshotFilePathForTsFile(tsFile, "test-snapshotId");
+        new SnapshotTaker(region).getSnapshotFilePathForTsFile(tsFile, "test-snapshotId");
     Assert.assertEquals(
         new File(
                 IoTDBDescriptor.getInstance().getConfig().getDataDirs()[0]
                     + File.separator
                     + "snapshot"
+                    + File.separator
+                    + "root.test-0"
                     + File.separator
                     + "test-snapshotId"
                     + File.separator

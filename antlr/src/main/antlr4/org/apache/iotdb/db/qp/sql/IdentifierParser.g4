@@ -43,9 +43,9 @@ keyWords
     | AS
     | ASC
     | ATTRIBUTES
-    | AUTOREGISTER
     | BEFORE
     | BEGIN
+    | BLOCKED
     | BOUNDARY
     | BY
     | CACHE
@@ -62,19 +62,28 @@ keyWords
     | CQS
     | CREATE
     | DATA
+    | DATABASE
+    | DATABASES
+    | DATANODEID
     | DATANODES
+    | DEACTIVATE
     | DEBUG
     | DELETE
     | DESC
     | DESCRIBE
     | DEVICE
     | DEVICES
+    | DETAILS
     | DISABLE
+    | DISCARD
     | DROP
+    | ELAPSEDTIME
     | END
+    | ENDTIME
     | EVERY
     | EXPLAIN
     | FILL
+    | FILE
     | FLUSH
     | FOR
     | FROM
@@ -105,12 +114,14 @@ keyWords
     | MERGE
     | METADATA
     | NODES
+    | NONE
     | NOW
     | OF
     | OFF
     | OFFSET
     | ON
     | ORDER
+    | ONSUCCESS
     | PARTITION
     | PASSWORD
     | PATHS
@@ -119,6 +130,7 @@ keyWords
     | PIPESINK
     | PIPESINKS
     | PIPESINKTYPE
+    | POLICY
     | PREVIOUS
     | PREVIOUSUNTILLAST
     | PRIVILEGES
@@ -127,8 +139,11 @@ keyWords
     | PRUNE
     | QUERIES
     | QUERY
+    | QUERYID
+    | RANGE
     | READONLY
     | REGEXP
+    | REGIONID
     | REGIONS
     | REMOVE
     | RENAME
@@ -136,8 +151,10 @@ keyWords
     | RESOURCE
     | REVOKE
     | ROLE
+    | RUNNING
     | SCHEMA
     | SELECT
+    | SERIESSLOTID
     | SET
     | SETTLE
     | SGLEVEL
@@ -146,13 +163,18 @@ keyWords
     | SOFFSET
     | STORAGE
     | START
+    | STARTTIME
+    | STATEFUL
+    | STATELESS
+    | STATEMENT
     | STOP
     | SYSTEM
     | TAGS
     | TASK
     | TEMPLATE
-    | TEMPLATES
+    | TIMEOUT
     | TIMESERIES
+    | TIMESLOTID
     | TO
     | TOLERANCE
     | TOP
@@ -165,9 +187,11 @@ keyWords
     | UNSET
     | UPDATE
     | UPSERT
+    | URI
     | USER
     | USING
     | VALUES
+    | VARIATION
     | VERIFY
     | VERSION
     | WHERE

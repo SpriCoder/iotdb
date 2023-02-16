@@ -21,33 +21,28 @@ package org.apache.iotdb.db.mpp.plan.statement.sys;
 
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.mpp.plan.analyze.QueryType;
-import org.apache.iotdb.db.mpp.plan.constant.StatementType;
 import org.apache.iotdb.db.mpp.plan.statement.IConfigStatement;
 import org.apache.iotdb.db.mpp.plan.statement.Statement;
+import org.apache.iotdb.db.mpp.plan.statement.StatementType;
 import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
 
 public class ClearCacheStatement extends Statement implements IConfigStatement {
 
-  private static final Logger logger = LoggerFactory.getLogger(ClearCacheStatement.class);
-
-  private boolean isCluster;
+  private boolean onCluster;
 
   public ClearCacheStatement(StatementType clearCacheType) {
     this.statementType = clearCacheType;
   }
 
-  public boolean isCluster() {
-    return isCluster;
+  public boolean isOnCluster() {
+    return onCluster;
   }
 
-  public void setCluster(boolean isCluster) {
-    this.isCluster = isCluster;
+  public void setOnCluster(boolean onCluster) {
+    this.onCluster = onCluster;
   }
 
   @Override

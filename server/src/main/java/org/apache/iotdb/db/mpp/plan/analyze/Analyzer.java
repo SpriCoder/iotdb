@@ -20,31 +20,48 @@
 package org.apache.iotdb.db.mpp.plan.analyze;
 
 import org.apache.iotdb.db.mpp.common.MPPQueryContext;
+import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.mpp.plan.analyze.schema.ClusterSchemaFetcher;
+import org.apache.iotdb.db.mpp.plan.analyze.schema.ISchemaFetcher;
 import org.apache.iotdb.db.mpp.plan.statement.Statement;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static org.apache.iotdb.db.mpp.common.QueryId.mockQueryId;
+import static org.apache.iotdb.db.mpp.metric.QueryPlanCostMetricSet.ANALYZER;
 
 /** Analyze the statement and generate Analysis. */
 public class Analyzer {
-  private static final Logger logger = LoggerFactory.getLogger(Analyzer.class);
-
   private final MPPQueryContext context;
 
   private final IPartitionFetcher partitionFetcher;
   private final ISchemaFetcher schemaFetcher;
-  private final TypeProvider typeProvider;
 
   public Analyzer(
       MPPQueryContext context, IPartitionFetcher partitionFetcher, ISchemaFetcher schemaFetcher) {
     this.context = context;
     this.partitionFetcher = partitionFetcher;
     this.schemaFetcher = schemaFetcher;
-    this.typeProvider = new TypeProvider();
   }
 
   public Analysis analyze(Statement statement) {
-    return new AnalyzeVisitor(partitionFetcher, schemaFetcher, typeProvider, context)
-        .process(statement, context);
+    long startTime = System.nanoTime();
+    Analysis analysis =
+        new AnalyzeVisitor(partitionFetcher, schemaFetcher).process(statement, context);
+
+    if (statement.isQuery()) {
+      QueryMetricsManager.getInstance().recordPlanCost(ANALYZER, System.nanoTime() - startTime);
+    }
+    return analysis;
+  }
+
+  public static void validate(Statement statement) {
+    MPPQueryContext context = new MPPQueryContext(mockQueryId);
+
+    IPartitionFetcher partitionFetcher;
+    ISchemaFetcher schemaFetcher;
+    partitionFetcher = ClusterPartitionFetcher.getInstance();
+    schemaFetcher = ClusterSchemaFetcher.getInstance();
+
+    Analyzer analyzer = new Analyzer(context, partitionFetcher, schemaFetcher);
+    analyzer.analyze(statement);
   }
 }

@@ -29,8 +29,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-import static com.google.common.base.Preconditions.checkState;
-
 public class TypeProvider {
 
   private final Map<String, TSDataType> typeMap;
@@ -43,16 +41,15 @@ public class TypeProvider {
     this.typeMap = typeMap;
   }
 
-  public TSDataType getType(String path) {
-    checkState(typeMap.containsKey(path), String.format("no data type found for path: %s", path));
-    return typeMap.get(path);
+  public TSDataType getType(String symbol) {
+    return typeMap.get(symbol);
   }
 
-  public void setType(String path, TSDataType dataType) {
-    checkState(
-        !typeMap.containsKey(path) || typeMap.get(path) == dataType,
-        String.format("inconsistent data type for path: %s", path));
-    this.typeMap.put(path, dataType);
+  public void setType(String symbol, TSDataType dataType) {
+    // DataType of NullOperand is null, we needn't put it into TypeProvider
+    if (dataType != null) {
+      this.typeMap.put(symbol, dataType);
+    }
   }
 
   public boolean containsTypeInfoOf(String path) {

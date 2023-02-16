@@ -22,7 +22,6 @@ import org.apache.iotdb.commons.exception.ConfigurationException;
 import org.apache.iotdb.commons.file.SystemFileFactory;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.conf.IoTDBStartCheck;
-import org.apache.iotdb.db.service.IoTDB;
 import org.apache.iotdb.db.utils.EnvironmentUtils;
 import org.apache.iotdb.itbase.category.LocalStandaloneTest;
 import org.apache.iotdb.tsfile.common.conf.TSFileConfig;
@@ -70,10 +69,10 @@ public class IoTDBCheckConfigIT {
     console = System.out;
     System.setOut(new PrintStream(bytes));
 
-    systemProperties.put("partition_interval", "86400");
+    systemProperties.put("partition_interval", "9223372036854775807");
     systemProperties.put("timestamp_precision", "ms");
     systemProperties.put("tsfile_storage_fs", "LOCAL");
-    systemProperties.put("enable_partition", "true");
+    systemProperties.put("enable_partition", "false");
     systemProperties.put("max_degree_of_index_node", "256");
     systemProperties.put("tag_attribute_total_size", "700");
     systemProperties.put("iotdb_version", "0.13.0");
@@ -90,7 +89,7 @@ public class IoTDBCheckConfigIT {
 
   @Test
   public void testSaveTimeEncoderToSystemProperties() throws Exception {
-    IoTDBStartCheck.getInstance().checkConfig();
+    IoTDBStartCheck.getInstance().checkSystemConfig();
     // read properties from system.properties
     try (FileInputStream inputStream = new FileInputStream(propertiesFile);
         InputStreamReader inputStreamReader =
@@ -105,12 +104,11 @@ public class IoTDBCheckConfigIT {
   public void testAlterTimeEncoderAfterStartService() throws Exception {
     EnvironmentUtils.shutdownDaemon();
     EnvironmentUtils.stopDaemon();
-    IoTDB.configManager.clear();
     systemProperties.put("time_encoder", "REGULAR");
     writeSystemFile();
     EnvironmentUtils.reactiveDaemon();
     try {
-      IoTDBStartCheck.getInstance().checkConfig();
+      IoTDBStartCheck.getInstance().checkSystemConfig();
     } catch (ConfigurationException t) {
       t.printStackTrace();
       assertEquals("time_encoder", t.getParameter());
@@ -124,12 +122,11 @@ public class IoTDBCheckConfigIT {
   public void testSameTimeEncoderAfterStartService() throws Exception {
     EnvironmentUtils.shutdownDaemon();
     EnvironmentUtils.stopDaemon();
-    IoTDB.configManager.clear();
     systemProperties.put("time_encoder", "TS_2DIFF");
     writeSystemFile();
     EnvironmentUtils.reactiveDaemon();
     try {
-      IoTDBStartCheck.getInstance().checkConfig();
+      IoTDBStartCheck.getInstance().checkSystemConfig();
     } catch (Throwable t) {
       fail(t.getMessage());
     }

@@ -19,11 +19,9 @@
 package org.apache.iotdb.db.wal.node;
 
 import org.apache.iotdb.db.engine.memtable.IMemTable;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.write.DeleteDataNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.write.InsertRowNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.write.InsertTabletNode;
-import org.apache.iotdb.db.qp.physical.crud.DeletePlan;
-import org.apache.iotdb.db.qp.physical.crud.InsertRowPlan;
-import org.apache.iotdb.db.qp.physical.crud.InsertTabletPlan;
 import org.apache.iotdb.db.wal.exception.WALException;
 import org.apache.iotdb.db.wal.utils.listener.WALFlushListener;
 
@@ -42,18 +40,7 @@ public class WALFakeNode implements IWALNode {
   }
 
   @Override
-  public WALFlushListener log(long memTableId, InsertRowPlan insertRowPlan) {
-    return getResult();
-  }
-
-  @Override
   public WALFlushListener log(long memTableId, InsertRowNode insertRowNode) {
-    return getResult();
-  }
-
-  @Override
-  public WALFlushListener log(
-      long memTableId, InsertTabletPlan insertTabletPlan, int start, int end) {
     return getResult();
   }
 
@@ -64,7 +51,7 @@ public class WALFakeNode implements IWALNode {
   }
 
   @Override
-  public WALFlushListener log(long memTableId, DeletePlan deletePlan) {
+  public WALFlushListener log(long memTableId, DeleteDataNode deleteDataNode) {
     return getResult();
   }
 
@@ -76,6 +63,8 @@ public class WALFakeNode implements IWALNode {
         break;
       case FAILURE:
         walFlushListener.fail(cause);
+        break;
+      default:
         break;
     }
     return walFlushListener;

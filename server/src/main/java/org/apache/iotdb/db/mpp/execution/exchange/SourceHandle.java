@@ -23,8 +23,12 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.commons.client.IClientManager;
 import org.apache.iotdb.commons.client.sync.SyncDataNodeMPPDataExchangeServiceClient;
 import org.apache.iotdb.commons.utils.TestOnly;
+import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.mpp.common.FragmentInstanceId;
 import org.apache.iotdb.db.mpp.execution.exchange.MPPDataExchangeManager.SourceHandleListener;
 import org.apache.iotdb.db.mpp.execution.memory.LocalMemoryManager;
+import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.utils.SetThreadName;
 import org.apache.iotdb.mpp.rpc.thrift.TAcknowledgeDataBlockEvent;
 import org.apache.iotdb.mpp.rpc.thrift.TFragmentInstanceId;
 import org.apache.iotdb.mpp.rpc.thrift.TGetDataBlockRequest;
@@ -35,7 +39,6 @@ import org.apache.iotdb.tsfile.utils.Pair;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
-import io.airlift.concurrent.SetThreadName;
 import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +52,12 @@ import java.util.concurrent.ExecutorService;
 
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static org.apache.iotdb.db.mpp.execution.exchange.MPPDataExchangeManager.createFullIdFrom;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.GET_DATA_BLOCK_TASK_CALLER;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.ON_ACKNOWLEDGE_DATA_BLOCK_EVENT_TASK_CALLER;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.SOURCE_HANDLE_DESERIALIZE_TSBLOCK_REMOTE;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.SOURCE_HANDLE_GET_TSBLOCK_REMOTE;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCountMetricSet.GET_DATA_BLOCK_NUM_CALLER;
+import static org.apache.iotdb.db.mpp.metric.DataExchangeCountMetricSet.ON_ACKNOWLEDGE_DATA_BLOCK_NUM_CALLER;
 
 public class SourceHandle implements ISourceHandle {
 
@@ -60,14 +69,16 @@ public class SourceHandle implements ISourceHandle {
   private final TEndPoint remoteEndpoint;
   private final TFragmentInstanceId remoteFragmentInstanceId;
   private final TFragmentInstanceId localFragmentInstanceId;
+
+  private final String fullFragmentInstanceId;
   private final String localPlanNodeId;
   private final LocalMemoryManager localMemoryManager;
   private final ExecutorService executorService;
   private final TsBlockSerde serde;
   private final SourceHandleListener sourceHandleListener;
 
-  private final Map<Integer, TsBlock> sequenceIdToTsBlock = new HashMap<>();
   private final Map<Integer, Long> sequenceIdToDataBlockSize = new HashMap<>();
+  private final Map<Integer, ByteBuffer> sequenceIdToTsBlock = new HashMap<>();
 
   private final String threadName;
   private long retryIntervalInMs;
@@ -89,6 +100,18 @@ public class SourceHandle implements ISourceHandle {
 
   private boolean closed = false;
 
+  /** max bytes this SourceHandle can reserve. */
+  private long maxBytesCanReserve =
+      IoTDBDescriptor.getInstance().getConfig().getMaxBytesPerFragmentInstance();
+
+  /**
+   * this is set to true after calling isBlocked() at least once which indicates that this
+   * SourceHandle needs to output data
+   */
+  private boolean canGetTsBlockFromRemote = false;
+
+  private static final QueryMetricsManager QUERY_METRICS = QueryMetricsManager.getInstance();
+
   public SourceHandle(
       TEndPoint remoteEndpoint,
       TFragmentInstanceId remoteFragmentInstanceId,
@@ -103,6 +126,8 @@ public class SourceHandle implements ISourceHandle {
     this.remoteEndpoint = Validate.notNull(remoteEndpoint);
     this.remoteFragmentInstanceId = Validate.notNull(remoteFragmentInstanceId);
     this.localFragmentInstanceId = Validate.notNull(localFragmentInstanceId);
+    this.fullFragmentInstanceId =
+        FragmentInstanceId.createFragmentInstanceIdFromTFragmentInstanceId(localFragmentInstanceId);
     this.localPlanNodeId = Validate.notNull(localPlanNodeId);
     this.localMemoryManager = Validate.notNull(localMemoryManager);
     this.executorService = Validate.notNull(executorService);
@@ -111,32 +136,53 @@ public class SourceHandle implements ISourceHandle {
     this.bufferRetainedSizeInBytes = 0L;
     this.mppDataExchangeServiceClientManager = mppDataExchangeServiceClientManager;
     this.retryIntervalInMs = DEFAULT_RETRY_INTERVAL_IN_MS;
-    this.threadName =
-        createFullIdFrom(localFragmentInstanceId, localPlanNodeId + "." + "SourceHandle");
+    this.threadName = createFullIdFrom(localFragmentInstanceId, localPlanNodeId);
   }
 
   @Override
   public synchronized TsBlock receive() {
-    try (SetThreadName sourceHandleName = new SetThreadName(threadName)) {
+    ByteBuffer tsBlock = getSerializedTsBlock();
+    if (tsBlock != null) {
+      long startTime = System.nanoTime();
+      try {
+        return serde.deserialize(tsBlock);
+      } finally {
+        QUERY_METRICS.recordDataExchangeCost(
+            SOURCE_HANDLE_DESERIALIZE_TSBLOCK_REMOTE, System.nanoTime() - startTime);
+      }
+    } else {
+      return null;
+    }
+  }
 
+  @Override
+  public synchronized ByteBuffer getSerializedTsBlock() {
+    long startTime = System.nanoTime();
+    try (SetThreadName sourceHandleName = new SetThreadName(threadName)) {
       checkState();
 
       if (!blocked.isDone()) {
         throw new IllegalStateException("Source handle is blocked.");
       }
 
-      TsBlock tsBlock = sequenceIdToTsBlock.remove(currSequenceId);
+      ByteBuffer tsBlock = sequenceIdToTsBlock.remove(currSequenceId);
       if (tsBlock == null) {
         return null;
       }
       long retainedSize = sequenceIdToDataBlockSize.remove(currSequenceId);
-      logger.info("Receive {} TsBlock, size is {}", currSequenceId, retainedSize);
+      logger.debug("[GetTsBlockFromBuffer] sequenceId:{}, size:{}", currSequenceId, retainedSize);
       currSequenceId += 1;
       bufferRetainedSizeInBytes -= retainedSize;
-      localMemoryManager.getQueryPool().free(localFragmentInstanceId.getQueryId(), retainedSize);
+      localMemoryManager
+          .getQueryPool()
+          .free(
+              localFragmentInstanceId.getQueryId(),
+              fullFragmentInstanceId,
+              localPlanNodeId,
+              retainedSize);
 
       if (sequenceIdToTsBlock.isEmpty() && !isFinished()) {
-        logger.info("no buffered TsBlock, blocked");
+        logger.debug("[WaitForMoreTsBlock]");
         blocked = SettableFuture.create();
       }
       if (isFinished()) {
@@ -144,85 +190,96 @@ public class SourceHandle implements ISourceHandle {
       }
       trySubmitGetDataBlocksTask();
       return tsBlock;
+    } finally {
+      QUERY_METRICS.recordDataExchangeCost(
+          SOURCE_HANDLE_GET_TSBLOCK_REMOTE, System.nanoTime() - startTime);
     }
   }
 
   private synchronized void trySubmitGetDataBlocksTask() {
-    try (SetThreadName sourceHandleName = new SetThreadName(threadName)) {
-      if (aborted || closed) {
-        return;
-      }
-      if (blockedOnMemory != null && !blockedOnMemory.isDone()) {
-        return;
-      }
+    if (aborted || closed) {
+      return;
+    }
+    if (blockedOnMemory != null && !blockedOnMemory.isDone()) {
+      return;
+    }
 
-      final int startSequenceId = nextSequenceId;
-      int endSequenceId = nextSequenceId;
-      long reservedBytes = 0L;
-      Pair<ListenableFuture<Void>, Boolean> pair = null;
-      long blockedSize = 0L;
-      while (sequenceIdToDataBlockSize.containsKey(endSequenceId)) {
-        Long bytesToReserve = sequenceIdToDataBlockSize.get(endSequenceId);
-        if (bytesToReserve == null) {
-          throw new IllegalStateException("Data block size is null.");
-        }
-        pair =
-            localMemoryManager
-                .getQueryPool()
-                .reserve(localFragmentInstanceId.getQueryId(), bytesToReserve);
-        bufferRetainedSizeInBytes += bytesToReserve;
-        endSequenceId += 1;
-        reservedBytes += bytesToReserve;
-        if (!pair.right) {
-          blockedSize = bytesToReserve;
-          break;
-        }
+    final int startSequenceId = nextSequenceId;
+    int endSequenceId = nextSequenceId;
+    long reservedBytes = 0L;
+    Pair<ListenableFuture<Void>, Boolean> pair = null;
+    long blockedSize = 0L;
+    while (sequenceIdToDataBlockSize.containsKey(endSequenceId)) {
+      Long bytesToReserve = sequenceIdToDataBlockSize.get(endSequenceId);
+      if (bytesToReserve == null) {
+        throw new IllegalStateException("Data block size is null.");
       }
-
-      if (pair == null) {
-        // Next data block not generated yet. Do nothing.
-        return;
-      }
-      nextSequenceId = endSequenceId;
-
+      pair =
+          localMemoryManager
+              .getQueryPool()
+              .reserve(
+                  localFragmentInstanceId.getQueryId(),
+                  fullFragmentInstanceId,
+                  localPlanNodeId,
+                  bytesToReserve,
+                  maxBytesCanReserve);
+      bufferRetainedSizeInBytes += bytesToReserve;
+      endSequenceId += 1;
+      reservedBytes += bytesToReserve;
       if (!pair.right) {
-        endSequenceId--;
-        reservedBytes -= blockedSize;
-        // The future being not completed indicates,
-        //   1. Memory has been reserved for blocks in [startSequenceId, endSequenceId).
-        //   2. Memory reservation for block whose sequence ID equals endSequenceId - 1 is blocked.
-        //   3. Have not reserve memory for the rest of blocks.
-        //
-        //  startSequenceId          endSequenceId - 1  endSequenceId
-        //         |-------- reserved --------|--- blocked ---|--- not reserved ---|
-
-        // Schedule another call of trySubmitGetDataBlocksTask for the rest of blocks.
-        blockedOnMemory = pair.left;
-        final int blockedSequenceId = endSequenceId;
-        final long blockedRetainedSize = blockedSize;
-        blockedOnMemory.addListener(
-            () ->
-                executorService.submit(
-                    new GetDataBlocksTask(
-                        blockedSequenceId, blockedSequenceId + 1, blockedRetainedSize)),
-            executorService);
+        blockedSize = bytesToReserve;
+        break;
       }
+    }
 
-      if (endSequenceId > startSequenceId) {
-        executorService.submit(
-            new GetDataBlocksTask(startSequenceId, endSequenceId, reservedBytes));
-      }
+    if (pair == null) {
+      // Next data block not generated yet. Do nothing.
+      return;
+    }
+    nextSequenceId = endSequenceId;
+
+    if (!pair.right) {
+      endSequenceId--;
+      reservedBytes -= blockedSize;
+      // The future being not completed indicates,
+      //   1. Memory has been reserved for blocks in [startSequenceId, endSequenceId).
+      //   2. Memory reservation for block whose sequence ID equals endSequenceId - 1 is blocked.
+      //   3. Have not reserve memory for the rest of blocks.
+      //
+      //  startSequenceId          endSequenceId - 1  endSequenceId
+      //         |-------- reserved --------|--- blocked ---|--- not reserved ---|
+
+      // Schedule another call of trySubmitGetDataBlocksTask for the rest of blocks.
+      blockedOnMemory = pair.left;
+      final int blockedSequenceId = endSequenceId;
+      final long blockedRetainedSize = blockedSize;
+      blockedOnMemory.addListener(
+          () ->
+              executorService.submit(
+                  new GetDataBlocksTask(
+                      blockedSequenceId, blockedSequenceId + 1, blockedRetainedSize)),
+          executorService);
+    }
+
+    if (endSequenceId > startSequenceId) {
+      executorService.submit(new GetDataBlocksTask(startSequenceId, endSequenceId, reservedBytes));
     }
   }
 
   @Override
   public synchronized ListenableFuture<?> isBlocked() {
     checkState();
+    if (!canGetTsBlockFromRemote) {
+      canGetTsBlockFromRemote = true;
+      // submit get data task once isBlocked is called to ensure that the blocked future will be
+      // completed in case that trySubmitGetDataBlocksTask() is not called.
+      trySubmitGetDataBlocksTask();
+    }
     return nonCancellationPropagating(blocked);
   }
 
   synchronized void setNoMoreTsBlocks(int lastSequenceId) {
-    logger.info("receive NoMoreTsBlock event. ");
+    logger.debug("[ReceiveNoMoreTsBlockEvent]");
     this.lastSequenceId = lastSequenceId;
     if (!blocked.isDone() && remoteTsBlockedConsumedUp()) {
       blocked.set(null);
@@ -233,15 +290,17 @@ public class SourceHandle implements ISourceHandle {
   }
 
   synchronized void updatePendingDataBlockInfo(int startSequenceId, List<Long> dataBlockSizes) {
-    logger.info(
-        "receive newDataBlockEvent. [{}, {}), each size is: {}",
+    logger.debug(
+        "[ReceiveNewTsBlockNotification] [{}, {}), each size is: {}",
         startSequenceId,
         startSequenceId + dataBlockSizes.size(),
         dataBlockSizes);
     for (int i = 0; i < dataBlockSizes.size(); i++) {
       sequenceIdToDataBlockSize.put(i + startSequenceId, dataBlockSizes.get(i));
     }
-    trySubmitGetDataBlocksTask();
+    if (canGetTsBlockFromRemote) {
+      trySubmitGetDataBlocksTask();
+    }
   }
 
   @Override
@@ -260,12 +319,25 @@ public class SourceHandle implements ISourceHandle {
       if (bufferRetainedSizeInBytes > 0) {
         localMemoryManager
             .getQueryPool()
-            .free(localFragmentInstanceId.getQueryId(), bufferRetainedSizeInBytes);
+            .free(
+                localFragmentInstanceId.getQueryId(),
+                fullFragmentInstanceId,
+                localPlanNodeId,
+                bufferRetainedSizeInBytes);
         bufferRetainedSizeInBytes = 0;
       }
+      localMemoryManager
+          .getQueryPool()
+          .clearMemoryReservationMap(
+              localFragmentInstanceId.getQueryId(), fullFragmentInstanceId, localPlanNodeId);
       aborted = true;
       sourceHandleListener.onAborted(this);
     }
+  }
+
+  @Override
+  public void abort(Throwable t) {
+    abort();
   }
 
   @Override
@@ -284,9 +356,17 @@ public class SourceHandle implements ISourceHandle {
       if (bufferRetainedSizeInBytes > 0) {
         localMemoryManager
             .getQueryPool()
-            .free(localFragmentInstanceId.getQueryId(), bufferRetainedSizeInBytes);
+            .free(
+                localFragmentInstanceId.getQueryId(),
+                fullFragmentInstanceId,
+                localPlanNodeId,
+                bufferRetainedSizeInBytes);
         bufferRetainedSizeInBytes = 0;
       }
+      localMemoryManager
+          .getQueryPool()
+          .clearMemoryReservationMap(
+              localFragmentInstanceId.getQueryId(), fullFragmentInstanceId, localPlanNodeId);
       closed = true;
       currSequenceId = lastSequenceId + 1;
       sourceHandleListener.onFinished(this);
@@ -327,6 +407,11 @@ public class SourceHandle implements ISourceHandle {
   }
 
   @Override
+  public void setMaxBytesCanReserve(long maxBytesCanReserve) {
+    this.maxBytesCanReserve = Math.min(this.maxBytesCanReserve, maxBytesCanReserve);
+  }
+
+  @Override
   public boolean isAborted() {
     return aborted;
   }
@@ -345,7 +430,7 @@ public class SourceHandle implements ISourceHandle {
         "Query[%s]-[%s-%s-SourceHandle-%s]",
         localFragmentInstanceId.getQueryId(),
         localFragmentInstanceId.getFragmentId(),
-        localFragmentInstanceId.getInstanceId(),
+        fullFragmentInstanceId,
         localPlanNodeId);
   }
 
@@ -380,21 +465,24 @@ public class SourceHandle implements ISourceHandle {
     @Override
     public void run() {
       try (SetThreadName sourceHandleName = new SetThreadName(threadName)) {
-        logger.info("try to get data blocks [{}, {}) ", startSequenceId, endSequenceId);
+        logger.debug("[StartPullTsBlocksFromRemote] [{}, {}) ", startSequenceId, endSequenceId);
         TGetDataBlockRequest req =
             new TGetDataBlockRequest(remoteFragmentInstanceId, startSequenceId, endSequenceId);
         int attempt = 0;
         while (attempt < MAX_ATTEMPT_TIMES) {
           attempt += 1;
+
+          long startTime = System.nanoTime();
           try (SyncDataNodeMPPDataExchangeServiceClient client =
               mppDataExchangeServiceClientManager.borrowClient(remoteEndpoint)) {
             TGetDataBlockResponse resp = client.getDataBlock(req);
-            List<TsBlock> tsBlocks = new ArrayList<>(resp.getTsBlocks().size());
-            for (ByteBuffer byteBuffer : resp.getTsBlocks()) {
-              TsBlock tsBlock = serde.deserialize(byteBuffer);
-              tsBlocks.add(tsBlock);
-            }
-            logger.info("got data blocks. count: {}", tsBlocks.size());
+
+            int tsBlockNum = resp.getTsBlocks().size();
+            List<ByteBuffer> tsBlocks = new ArrayList<>(tsBlockNum);
+            tsBlocks.addAll(resp.getTsBlocks());
+
+            logger.debug("[EndPullTsBlocksFromRemote] Count:{}", tsBlockNum);
+            QUERY_METRICS.recordDataBlockNum(GET_DATA_BLOCK_NUM_CALLER, tsBlockNum);
             executorService.submit(
                 new SendAcknowledgeDataBlockEventTask(startSequenceId, endSequenceId));
             synchronized (SourceHandle.this) {
@@ -404,32 +492,58 @@ public class SourceHandle implements ISourceHandle {
               for (int i = startSequenceId; i < endSequenceId; i++) {
                 sequenceIdToTsBlock.put(i, tsBlocks.get(i - startSequenceId));
               }
+              logger.debug("[PutTsBlocksIntoBuffer]");
               if (!blocked.isDone()) {
                 blocked.set(null);
               }
             }
             break;
           } catch (Throwable e) {
-            logger.error("failed to get data block, attempt times: {}", attempt, e);
+
+            logger.warn(
+                "failed to get data block [{}, {}), attempt times: {}",
+                startSequenceId,
+                endSequenceId,
+                attempt,
+                e);
+
+            // reach retry max times
             if (attempt == MAX_ATTEMPT_TIMES) {
-              synchronized (SourceHandle.this) {
-                bufferRetainedSizeInBytes -= reservedBytes;
-                localMemoryManager
-                    .getQueryPool()
-                    .free(localFragmentInstanceId.getQueryId(), reservedBytes);
-                sourceHandleListener.onFailure(SourceHandle.this, e);
-              }
+              fail(e);
+              return;
             }
+
+            // sleep some time before retrying
             try {
               Thread.sleep(retryIntervalInMs);
             } catch (InterruptedException ex) {
               Thread.currentThread().interrupt();
-              synchronized (SourceHandle.this) {
-                sourceHandleListener.onFailure(SourceHandle.this, e);
-              }
+              // if interrupted during sleeping, fast fail and don't retry any more
+              fail(e);
+              return;
             }
+          } finally {
+            QUERY_METRICS.recordDataExchangeCost(
+                GET_DATA_BLOCK_TASK_CALLER, System.nanoTime() - startTime);
           }
         }
+      }
+    }
+
+    private void fail(Throwable t) {
+      synchronized (SourceHandle.this) {
+        if (aborted || closed) {
+          return;
+        }
+        bufferRetainedSizeInBytes -= reservedBytes;
+        localMemoryManager
+            .getQueryPool()
+            .free(
+                localFragmentInstanceId.getQueryId(),
+                fullFragmentInstanceId,
+                localPlanNodeId,
+                reservedBytes);
+        sourceHandleListener.onFailure(SourceHandle.this, t);
       }
     }
   }
@@ -447,19 +561,20 @@ public class SourceHandle implements ISourceHandle {
     @Override
     public void run() {
       try (SetThreadName sourceHandleName = new SetThreadName(threadName)) {
-        logger.info("send ack data block event [{}, {}).", startSequenceId, endSequenceId);
+        logger.debug("[SendACKTsBlock] [{}, {}).", startSequenceId, endSequenceId);
         int attempt = 0;
         TAcknowledgeDataBlockEvent acknowledgeDataBlockEvent =
             new TAcknowledgeDataBlockEvent(
                 remoteFragmentInstanceId, startSequenceId, endSequenceId);
         while (attempt < MAX_ATTEMPT_TIMES) {
           attempt += 1;
+          long startTime = System.nanoTime();
           try (SyncDataNodeMPPDataExchangeServiceClient client =
               mppDataExchangeServiceClientManager.borrowClient(remoteEndpoint)) {
             client.onAcknowledgeDataBlockEvent(acknowledgeDataBlockEvent);
             break;
           } catch (Throwable e) {
-            logger.error(
+            logger.warn(
                 "failed to send ack data block event [{}, {}), attempt times: {}",
                 startSequenceId,
                 endSequenceId,
@@ -478,6 +593,11 @@ public class SourceHandle implements ISourceHandle {
                 sourceHandleListener.onFailure(SourceHandle.this, e);
               }
             }
+          } finally {
+            QUERY_METRICS.recordDataExchangeCost(
+                ON_ACKNOWLEDGE_DATA_BLOCK_EVENT_TASK_CALLER, System.nanoTime() - startTime);
+            QUERY_METRICS.recordDataBlockNum(
+                ON_ACKNOWLEDGE_DATA_BLOCK_NUM_CALLER, endSequenceId - startSequenceId);
           }
         }
       }

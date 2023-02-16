@@ -19,10 +19,7 @@
 
 package org.apache.iotdb.db.mpp.plan.expression;
 
-import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.db.exception.query.LogicalOptimizeException;
-import org.apache.iotdb.db.exception.sql.SemanticException;
-import org.apache.iotdb.db.mpp.plan.analyze.TypeProvider;
+import org.apache.iotdb.db.mpp.common.NodeRef;
 import org.apache.iotdb.db.mpp.plan.expression.binary.AdditionExpression;
 import org.apache.iotdb.db.mpp.plan.expression.binary.DivisionExpression;
 import org.apache.iotdb.db.mpp.plan.expression.binary.EqualToExpression;
@@ -37,6 +34,7 @@ import org.apache.iotdb.db.mpp.plan.expression.binary.MultiplicationExpression;
 import org.apache.iotdb.db.mpp.plan.expression.binary.NonEqualExpression;
 import org.apache.iotdb.db.mpp.plan.expression.binary.SubtractionExpression;
 import org.apache.iotdb.db.mpp.plan.expression.leaf.ConstantOperand;
+import org.apache.iotdb.db.mpp.plan.expression.leaf.NullOperand;
 import org.apache.iotdb.db.mpp.plan.expression.leaf.TimeSeriesOperand;
 import org.apache.iotdb.db.mpp.plan.expression.leaf.TimestampOperand;
 import org.apache.iotdb.db.mpp.plan.expression.multi.FunctionExpression;
@@ -49,9 +47,9 @@ import org.apache.iotdb.db.mpp.plan.expression.unary.NegationExpression;
 import org.apache.iotdb.db.mpp.plan.expression.unary.RegularExpression;
 import org.apache.iotdb.db.mpp.plan.expression.visitor.ExpressionVisitor;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.InputLocation;
+import org.apache.iotdb.db.mpp.plan.statement.StatementNode;
 import org.apache.iotdb.db.mpp.transformation.dag.memory.LayerMemoryAssigner;
 import org.apache.iotdb.db.mpp.transformation.dag.udf.UDTFExecutor;
-import org.apache.iotdb.db.qp.physical.crud.UDTFPlan;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
@@ -59,16 +57,14 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.ZoneId;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /** A skeleton class for expression */
-public abstract class Expression {
+public abstract class Expression extends StatementNode {
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Operations that Class Expression is not responsible for should be done through a visitor
@@ -89,19 +85,11 @@ public abstract class Expression {
     return false;
   }
 
-  public boolean isUserDefinedAggregationFunctionExpression() {
-    return false;
-  }
-
-  public boolean isTimeSeriesGeneratingFunctionExpression() {
-    return false;
-  }
-
   public boolean isCompareBinaryExpression() {
     return false;
   }
 
-  public abstract boolean isMappable(TypeProvider typeProvider);
+  public abstract boolean isMappable(Map<NodeRef<Expression>, TSDataType> expressionTypes);
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // isConstantOperand
@@ -121,25 +109,6 @@ public abstract class Expression {
   protected abstract boolean isConstantOperandInternal();
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  // Operations for time series paths
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-
-  // TODO: remove after MPP finish
-  @Deprecated
-  public abstract void concat(List<PartialPath> prefixPaths, List<Expression> resultExpressions);
-
-  // TODO: remove after MPP finish
-  @Deprecated
-  public abstract void removeWildcards(
-      org.apache.iotdb.db.qp.utils.WildcardsRemover wildcardsRemover,
-      List<Expression> resultExpressions)
-      throws LogicalOptimizeException;
-
-  // TODO: remove after MPP finish
-  @Deprecated
-  public abstract void collectPaths(Set<PartialPath> pathSet);
-
-  /////////////////////////////////////////////////////////////////////////////////////////////////
   // For UDF instances initialization
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -147,32 +116,10 @@ public abstract class Expression {
       Map<String, UDTFExecutor> expressionName2Executor, ZoneId zoneId);
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  // type inference
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  public abstract TSDataType inferTypes(TypeProvider typeProvider);
-
-  protected static void checkInputExpressionDataType(
-      String expressionString, TSDataType actual, TSDataType... expected) {
-    for (TSDataType type : expected) {
-      if (actual.equals(type)) {
-        return;
-      }
-    }
-    throw new SemanticException(
-        String.format(
-            "Invalid input expression data type. expression: %s, actual data type: %s, expected data type(s): %s.",
-            expressionString, actual.name(), Arrays.toString(expected)));
-  }
-
-  /////////////////////////////////////////////////////////////////////////////////////////////////
   // For expression evaluation DAG building
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   protected Integer inputColumnIndex = null;
-
-  // TODO: remove after MPP finish
-  @Deprecated
-  public abstract void bindInputLayerColumnIndexWithExpression(UDTFPlan udtfPlan);
 
   public abstract void bindInputLayerColumnIndexWithExpression(
       Map<String, List<InputLocation>> inputLocations);
@@ -237,11 +184,6 @@ public abstract class Expression {
 
     return getExpressionString().equals(((Expression) o).getExpressionString());
   }
-
-  /**
-   * returns the DIRECT children expressions if it has any, otherwise an EMPTY list will be returned
-   */
-  public abstract List<Expression> getExpressions();
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // serialize & deserialize
@@ -358,6 +300,10 @@ public abstract class Expression {
         expression = new LogicOrExpression(byteBuffer);
         break;
 
+      case 20:
+        expression = new NullOperand();
+        break;
+
       default:
         throw new IllegalArgumentException("Invalid expression type: " + type);
     }
@@ -377,6 +323,11 @@ public abstract class Expression {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // iterator: level-order traversal iterator
   /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * returns the DIRECT children expressions if it has any, otherwise an EMPTY list will be returned
+   */
+  public abstract List<Expression> getExpressions();
 
   /** returns an iterator to traverse all the successor expressions in a level-order */
   public final Iterator<Expression> iterator() {
