@@ -28,7 +28,6 @@ import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 
 public class AccumulatorFactory {
 
@@ -68,8 +67,31 @@ public class AccumulatorFactory {
         return new CountIfAccumulator(
             initKeepEvaluator(inputExpressions.get(1)),
             Boolean.parseBoolean(inputAttributes.getOrDefault("ignoreNull", "true")));
+      case TIME_DURATION:
+        return new TimeDurationAccumulator();
+      case MODE:
+        return crateModeAccumulator(tsDataType);
       default:
         throw new IllegalArgumentException("Invalid Aggregation function: " + aggregationType);
+    }
+  }
+
+  private static Accumulator crateModeAccumulator(TSDataType tsDataType) {
+    switch (tsDataType) {
+      case BOOLEAN:
+        return new BooleanModeAccumulator();
+      case TEXT:
+        return new BinaryModeAccumulator();
+      case INT32:
+        return new IntModeAccumulator();
+      case INT64:
+        return new LongModeAccumulator();
+      case FLOAT:
+        return new FloatModeAccumulator();
+      case DOUBLE:
+        return new DoubleModeAccumulator();
+      default:
+        throw new IllegalArgumentException("Unknown data type: " + tsDataType);
     }
   }
 
@@ -88,7 +110,12 @@ public class AccumulatorFactory {
     return accumulators;
   }
 
-  private static Function<Long, Boolean> initKeepEvaluator(Expression keepExpression) {
+  @FunctionalInterface
+  public interface KeepEvaluator {
+    boolean apply(long keep);
+  }
+
+  public static KeepEvaluator initKeepEvaluator(Expression keepExpression) {
     // We have check semantic in FE,
     // keep expression must be ConstantOperand or CompareBinaryExpression here
     if (keepExpression instanceof ConstantOperand) {

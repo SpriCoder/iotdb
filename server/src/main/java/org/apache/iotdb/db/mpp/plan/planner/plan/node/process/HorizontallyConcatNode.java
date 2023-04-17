@@ -63,7 +63,6 @@ public class HorizontallyConcatNode extends MultiChildProcessNode {
     return children.stream()
         .map(PlanNode::getOutputColumnNames)
         .flatMap(List::stream)
-        .distinct()
         .collect(Collectors.toList());
   }
 
@@ -89,7 +88,7 @@ public class HorizontallyConcatNode extends MultiChildProcessNode {
 
   @Override
   public String toString() {
-    return "VerticallyConcatNode-" + this.getPlanNodeId();
+    return "HorizontallyConcatNode-" + this.getPlanNodeId();
   }
 
   @Override

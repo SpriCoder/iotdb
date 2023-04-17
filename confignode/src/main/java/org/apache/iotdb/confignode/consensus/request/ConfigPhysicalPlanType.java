@@ -57,6 +57,7 @@ public enum ConfigPhysicalPlanType {
   GetRegionId((short) 306),
   GetSeriesSlotList((short) 307),
   GetTimeSlotList((short) 308),
+  PollSpecificRegionMaintainTask((short) 309),
 
   /** Partition */
   GetSchemaPartition((short) 400),
@@ -139,7 +140,25 @@ public enum ConfigPhysicalPlanType {
   ACTIVE_CQ((short) 1101),
   ADD_CQ((short) 1102),
   UPDATE_CQ_LAST_EXEC_TIME((short) 1103),
-  SHOW_CQ((short) 1104);
+  SHOW_CQ((short) 1104),
+
+  /** Ml model */
+  CreateModel((short) 1200),
+  UpdateModelInfo((short) 1201),
+  UpdateModelState((short) 1202),
+  DropModel((short) 1203),
+  ShowModel((short) 1204),
+  ShowTrail((short) 1205),
+
+  /** Pipe Plugin */
+  CreatePipePlugin((short) 1300),
+  DropPipePlugin((short) 1301),
+  GetPipePluginTable((short) 1302),
+  GetPipePluginJar((short) 1303),
+
+  /** Quota */
+  setSpaceQuota((short) 1400),
+  setThrottleQuota((short) 1401);
 
   private final short planType;
 

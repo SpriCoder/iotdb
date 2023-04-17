@@ -27,7 +27,11 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.common.rpc.thrift.TNodeResource;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
+import org.apache.iotdb.common.rpc.thrift.TSpaceQuota;
+import org.apache.iotdb.common.rpc.thrift.TThrottleQuota;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
+import org.apache.iotdb.common.rpc.thrift.TTimedQuota;
+import org.apache.iotdb.common.rpc.thrift.ThrottleType;
 import org.apache.iotdb.commons.auth.AuthException;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
 import org.apache.iotdb.commons.exception.IllegalPathException;
@@ -69,6 +73,13 @@ import org.apache.iotdb.confignode.consensus.request.write.cq.AddCQPlan;
 import org.apache.iotdb.confignode.consensus.request.write.cq.DropCQPlan;
 import org.apache.iotdb.confignode.consensus.request.write.cq.ShowCQPlan;
 import org.apache.iotdb.confignode.consensus.request.write.cq.UpdateCQLastExecTimePlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.AdjustMaxRegionGroupNumPlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.DatabaseSchemaPlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.DeleteDatabasePlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.SetDataReplicationFactorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.SetSchemaReplicationFactorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.SetTTLPlan;
+import org.apache.iotdb.confignode.consensus.request.write.database.SetTimePartitionIntervalPlan;
 import org.apache.iotdb.confignode.consensus.request.write.datanode.RegisterDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.datanode.RemoveDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.datanode.UpdateDataNodePlan;
@@ -76,16 +87,12 @@ import org.apache.iotdb.confignode.consensus.request.write.partition.CreateDataP
 import org.apache.iotdb.confignode.consensus.request.write.partition.CreateSchemaPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.write.procedure.DeleteProcedurePlan;
 import org.apache.iotdb.confignode.consensus.request.write.procedure.UpdateProcedurePlan;
+import org.apache.iotdb.confignode.consensus.request.write.quota.SetSpaceQuotaPlan;
+import org.apache.iotdb.confignode.consensus.request.write.quota.SetThrottleQuotaPlan;
 import org.apache.iotdb.confignode.consensus.request.write.region.CreateRegionGroupsPlan;
 import org.apache.iotdb.confignode.consensus.request.write.region.OfferRegionMaintainTasksPlan;
 import org.apache.iotdb.confignode.consensus.request.write.region.PollRegionMaintainTaskPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.AdjustMaxRegionGroupNumPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.DatabaseSchemaPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.DeleteDatabasePlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.SetDataReplicationFactorPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.SetSchemaReplicationFactorPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.SetTTLPlan;
-import org.apache.iotdb.confignode.consensus.request.write.storagegroup.SetTimePartitionIntervalPlan;
+import org.apache.iotdb.confignode.consensus.request.write.region.PollSpecificRegionMaintainTaskPlan;
 import org.apache.iotdb.confignode.consensus.request.write.sync.CreatePipeSinkPlan;
 import org.apache.iotdb.confignode.consensus.request.write.sync.DropPipeSinkPlan;
 import org.apache.iotdb.confignode.consensus.request.write.sync.GetPipeSinkPlan;
@@ -106,7 +113,7 @@ import org.apache.iotdb.confignode.consensus.request.write.trigger.UpdateTrigger
 import org.apache.iotdb.confignode.persistence.partition.maintainer.RegionCreateTask;
 import org.apache.iotdb.confignode.persistence.partition.maintainer.RegionDeleteTask;
 import org.apache.iotdb.confignode.procedure.Procedure;
-import org.apache.iotdb.confignode.procedure.impl.schema.DeleteStorageGroupProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.DeleteDatabaseProcedure;
 import org.apache.iotdb.confignode.procedure.impl.statemachine.CreateRegionGroupsProcedure;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateCQReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDatabaseSchema;
@@ -136,7 +143,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static org.apache.iotdb.common.rpc.thrift.TConsensusGroupType.ConfigNodeRegion;
+import static org.apache.iotdb.common.rpc.thrift.TConsensusGroupType.ConfigRegion;
 import static org.apache.iotdb.common.rpc.thrift.TConsensusGroupType.DataRegion;
 import static org.apache.iotdb.common.rpc.thrift.TConsensusGroupType.SchemaRegion;
 import static org.junit.Assert.assertEquals;
@@ -166,14 +173,22 @@ public class ConfigPhysicalPlanSerDeTest {
   @Test
   public void UpdateDataNodePlanTest() throws IOException {
     TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
-    dataNodeLocation.setDataNodeId(1);
+    dataNodeLocation.setDataNodeId(0);
     dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667));
     dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 10730));
     dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 10740));
     dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 10760));
     dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 10750));
 
-    UpdateDataNodePlan plan0 = new UpdateDataNodePlan(dataNodeLocation);
+    TNodeResource dataNodeResource = new TNodeResource();
+    dataNodeResource.setCpuCoreNum(16);
+    dataNodeResource.setMaxMemory(2022213861);
+
+    TDataNodeConfiguration dataNodeConfiguration = new TDataNodeConfiguration();
+    dataNodeConfiguration.setLocation(dataNodeLocation);
+    dataNodeConfiguration.setResource(dataNodeResource);
+
+    UpdateDataNodePlan plan0 = new UpdateDataNodePlan(dataNodeConfiguration);
     UpdateDataNodePlan plan1 =
         (UpdateDataNodePlan) ConfigPhysicalPlan.Factory.create(plan0.serializeToByteBuffer());
     Assert.assertEquals(plan0, plan1);
@@ -751,15 +766,15 @@ public class ConfigPhysicalPlanSerDeTest {
   @Test
   public void updateProcedureTest() throws IOException {
     // test procedure equals DeleteStorageGroupProcedure
-    DeleteStorageGroupProcedure deleteStorageGroupProcedure = new DeleteStorageGroupProcedure();
-    deleteStorageGroupProcedure.setDeleteSgSchema(new TDatabaseSchema("root.sg"));
+    DeleteDatabaseProcedure deleteDatabaseProcedure = new DeleteDatabaseProcedure();
+    deleteDatabaseProcedure.setDeleteDatabaseSchema(new TDatabaseSchema("root.sg"));
     UpdateProcedurePlan updateProcedurePlan0 = new UpdateProcedurePlan();
-    updateProcedurePlan0.setProcedure(deleteStorageGroupProcedure);
+    updateProcedurePlan0.setProcedure(deleteDatabaseProcedure);
     UpdateProcedurePlan updateProcedurePlan1 =
         (UpdateProcedurePlan)
             ConfigPhysicalPlan.Factory.create(updateProcedurePlan0.serializeToByteBuffer());
     Procedure proc = updateProcedurePlan1.getProcedure();
-    Assert.assertEquals(proc, deleteStorageGroupProcedure);
+    Assert.assertEquals(proc, deleteDatabaseProcedure);
 
     // test procedure equals CreateRegionGroupsProcedure
     TDataNodeLocation dataNodeLocation0 = new TDataNodeLocation();
@@ -796,11 +811,11 @@ public class ConfigPhysicalPlanSerDeTest {
   @Test
   public void UpdateProcedurePlanTest() throws IOException {
     UpdateProcedurePlan req0 = new UpdateProcedurePlan();
-    DeleteStorageGroupProcedure deleteStorageGroupProcedure = new DeleteStorageGroupProcedure();
+    DeleteDatabaseProcedure deleteDatabaseProcedure = new DeleteDatabaseProcedure();
     TDatabaseSchema tDatabaseSchema = new TDatabaseSchema();
     tDatabaseSchema.setName("root.sg");
-    deleteStorageGroupProcedure.setDeleteSgSchema(tDatabaseSchema);
-    req0.setProcedure(deleteStorageGroupProcedure);
+    deleteDatabaseProcedure.setDeleteDatabaseSchema(tDatabaseSchema);
+    req0.setProcedure(deleteDatabaseProcedure);
     UpdateProcedurePlan req1 =
         (UpdateProcedurePlan) ConfigPhysicalPlan.Factory.create(req0.serializeToByteBuffer());
     Assert.assertEquals(req0, req1);
@@ -845,21 +860,11 @@ public class ConfigPhysicalPlanSerDeTest {
   }
 
   private Template newSchemaTemplate(String name) throws IllegalPathException {
-    List<List<String>> measurements =
-        Arrays.asList(
-            Collections.singletonList(name + "_" + "temperature"),
-            Collections.singletonList(name + "_" + "status"));
-    List<List<TSDataType>> dataTypes =
-        Arrays.asList(
-            Collections.singletonList(TSDataType.FLOAT),
-            Collections.singletonList(TSDataType.BOOLEAN));
-    List<List<TSEncoding>> encodings =
-        Arrays.asList(
-            Collections.singletonList(TSEncoding.RLE), Collections.singletonList(TSEncoding.PLAIN));
-    List<List<CompressionType>> compressors =
-        Arrays.asList(
-            Collections.singletonList(CompressionType.SNAPPY),
-            Collections.singletonList(CompressionType.SNAPPY));
+    List<String> measurements = Arrays.asList(name + "_" + "temperature", name + "_" + "status");
+    List<TSDataType> dataTypes = Arrays.asList(TSDataType.FLOAT, TSDataType.BOOLEAN);
+    List<TSEncoding> encodings = Arrays.asList(TSEncoding.RLE, TSEncoding.PLAIN);
+    List<CompressionType> compressors =
+        Arrays.asList(CompressionType.SNAPPY, CompressionType.SNAPPY);
     return new Template(name, measurements, dataTypes, encodings, compressors);
   }
 
@@ -1174,7 +1179,7 @@ public class ConfigPhysicalPlanSerDeTest {
   public void GetRegionIdPlanTest() throws IOException {
     GetRegionIdPlan getRegionIdPlan0 =
         new GetRegionIdPlan(
-            "root.test", ConfigNodeRegion, new TSeriesPartitionSlot(1), new TTimePartitionSlot(0));
+            "root.test", ConfigRegion, new TSeriesPartitionSlot(1), new TTimePartitionSlot(0));
     GetRegionIdPlan getRegionIdPlan1 =
         (GetRegionIdPlan)
             ConfigPhysicalPlan.Factory.create(getRegionIdPlan0.serializeToByteBuffer());
@@ -1334,5 +1339,55 @@ public class ConfigPhysicalPlanSerDeTest {
         (UnsetSchemaTemplatePlan) ConfigPhysicalPlan.Factory.create(plan.serializeToByteBuffer());
     Assert.assertEquals(plan.getTemplateId(), deserializedPlan.getTemplateId());
     Assert.assertEquals(plan.getPath(), deserializedPlan.getPath());
+  }
+
+  @Test
+  public void PollSpecificRegionMaintainTaskPlanTest() throws IOException {
+    Set<TConsensusGroupId> regionIdSet =
+        new HashSet<>(
+            Arrays.asList(
+                new TConsensusGroupId(SchemaRegion, 1),
+                new TConsensusGroupId(DataRegion, 2),
+                new TConsensusGroupId(DataRegion, 3)));
+    PollSpecificRegionMaintainTaskPlan plan = new PollSpecificRegionMaintainTaskPlan(regionIdSet);
+
+    PollSpecificRegionMaintainTaskPlan deserializedPlan =
+        (PollSpecificRegionMaintainTaskPlan)
+            ConfigPhysicalPlan.Factory.create(plan.serializeToByteBuffer());
+    Assert.assertEquals(deserializedPlan.getRegionIdSet(), regionIdSet);
+  }
+
+  @Test
+  public void setSpaceQuotaPlanTest() throws IOException {
+    TSpaceQuota spaceQuota = new TSpaceQuota();
+    spaceQuota.setDeviceNum(2);
+    spaceQuota.setTimeserieNum(3);
+    spaceQuota.setDiskSize(1024);
+    SetSpaceQuotaPlan plan =
+        new SetSpaceQuotaPlan(Collections.singletonList("root.sg"), spaceQuota);
+    SetSpaceQuotaPlan deserializedPlan =
+        (SetSpaceQuotaPlan) ConfigPhysicalPlan.Factory.create(plan.serializeToByteBuffer());
+    Assert.assertEquals(plan.getPrefixPathList(), deserializedPlan.getPrefixPathList());
+    Assert.assertEquals(plan.getSpaceLimit(), deserializedPlan.getSpaceLimit());
+  }
+
+  @Test
+  public void setThrottleQuotaPlanTest() throws IOException {
+    TTimedQuota timedQuota1 = new TTimedQuota(3600, 5);
+    TTimedQuota timedQuota2 = new TTimedQuota(3600, 5);
+    Map<ThrottleType, TTimedQuota> throttleLimit = new HashMap<>();
+    throttleLimit.put(ThrottleType.READ_NUMBER, timedQuota1);
+    throttleLimit.put(ThrottleType.READ_SIZE, timedQuota2);
+    SetThrottleQuotaPlan plan = new SetThrottleQuotaPlan();
+    TThrottleQuota throttleQuota = new TThrottleQuota();
+    throttleQuota.setThrottleLimit(throttleLimit);
+    throttleQuota.setMemLimit(1000000);
+    throttleQuota.setCpuLimit(100);
+    plan.setThrottleQuota(throttleQuota);
+    plan.setUserName("tempuser");
+    SetThrottleQuotaPlan deserializedPlan =
+        (SetThrottleQuotaPlan) ConfigPhysicalPlan.Factory.create(plan.serializeToByteBuffer());
+    Assert.assertEquals(plan.getUserName(), deserializedPlan.getUserName());
+    Assert.assertEquals(plan.getThrottleQuota(), deserializedPlan.getThrottleQuota());
   }
 }
