@@ -21,7 +21,7 @@ package org.apache.iotdb.db.mpp.execution.exchange.sink;
 
 import org.apache.iotdb.db.mpp.execution.exchange.MPPDataExchangeManager.SinkListener;
 import org.apache.iotdb.db.mpp.execution.exchange.SharedTsBlockQueue;
-import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet;
 import org.apache.iotdb.mpp.rpc.thrift.TFragmentInstanceId;
 import org.apache.iotdb.tsfile.read.common.block.TsBlock;
 
@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.SINK_HANDLE_SEND_TSBLOCK_LOCAL;
 
@@ -47,7 +48,10 @@ public class LocalSinkChannel implements ISinkChannel {
   private boolean aborted = false;
   private boolean closed = false;
 
-  private static final QueryMetricsManager QUERY_METRICS = QueryMetricsManager.getInstance();
+  private boolean invokedOnFinished = false;
+
+  private static final DataExchangeCostMetricSet DATA_EXCHANGE_COST_METRIC_SET =
+      DataExchangeCostMetricSet.getInstance();
 
   public LocalSinkChannel(SharedTsBlockQueue queue, SinkListener sinkListener) {
     this.sinkListener = Validate.notNull(sinkListener);
@@ -83,6 +87,9 @@ public class LocalSinkChannel implements ISinkChannel {
   @Override
   public synchronized ListenableFuture<?> isFull() {
     checkState();
+    if (closed) {
+      return immediateVoidFuture();
+    }
     return nonCancellationPropagating(blocked);
   }
 
@@ -102,7 +109,10 @@ public class LocalSinkChannel implements ISinkChannel {
     synchronized (queue) {
       if (isFinished()) {
         synchronized (this) {
-          sinkListener.onFinish(this);
+          if (!invokedOnFinished) {
+            sinkListener.onFinish(this);
+            invokedOnFinished = true;
+          }
         }
       }
     }
@@ -115,6 +125,9 @@ public class LocalSinkChannel implements ISinkChannel {
       Validate.notNull(tsBlock, "tsBlocks is null");
       synchronized (this) {
         checkState();
+        if (closed) {
+          return;
+        }
         if (!blocked.isDone()) {
           throw new IllegalStateException("Sink handle is blocked.");
         }
@@ -130,7 +143,7 @@ public class LocalSinkChannel implements ISinkChannel {
         }
       }
     } finally {
-      QUERY_METRICS.recordDataExchangeCost(
+      DATA_EXCHANGE_COST_METRIC_SET.recordDataExchangeCost(
           SINK_HANDLE_SEND_TSBLOCK_LOCAL, System.nanoTime() - startTime);
     }
   }
@@ -181,7 +194,10 @@ public class LocalSinkChannel implements ISinkChannel {
         }
         closed = true;
         queue.close();
-        sinkListener.onFinish(this);
+        if (!invokedOnFinished) {
+          sinkListener.onFinish(this);
+          invokedOnFinished = true;
+        }
       }
     }
     LOGGER.debug("[EndCloseLocalSinkChannel]");

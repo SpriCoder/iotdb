@@ -24,7 +24,7 @@ import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.confignode.consensus.request.write.pipe.plugin.CreatePipePluginPlan;
 import org.apache.iotdb.confignode.consensus.request.write.pipe.plugin.DropPipePluginPlan;
 import org.apache.iotdb.confignode.manager.ConfigManager;
-import org.apache.iotdb.confignode.persistence.pipe.PipePluginInfo;
+import org.apache.iotdb.confignode.manager.pipe.plugin.PipePluginCoordinator;
 import org.apache.iotdb.confignode.procedure.env.ConfigNodeProcedureEnv;
 import org.apache.iotdb.confignode.procedure.exception.ProcedureException;
 import org.apache.iotdb.confignode.procedure.exception.ProcedureSuspendedException;
@@ -36,7 +36,7 @@ import org.apache.iotdb.confignode.procedure.impl.node.RemoveDataNodeProcedure;
 import org.apache.iotdb.confignode.procedure.state.pipe.plugin.CreatePipePluginState;
 import org.apache.iotdb.confignode.procedure.store.ProcedureType;
 import org.apache.iotdb.consensus.common.response.ConsensusWriteResponse;
-import org.apache.iotdb.pipe.api.exception.PipeManagementException;
+import org.apache.iotdb.pipe.api.exception.PipeException;
 import org.apache.iotdb.rpc.RpcUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
 import org.apache.iotdb.tsfile.utils.Binary;
@@ -116,22 +116,26 @@ public class CreatePipePluginProcedure extends AbstractNodeProcedure<CreatePipeP
 
   private Flow executeFromLock(ConfigNodeProcedureEnv env) {
     LOGGER.info("CreatePipePluginProcedure: executeFromLock({})", pipePluginMeta.getPluginName());
-    final PipePluginInfo pipePluginInfo =
-        env.getConfigManager().getPipeManager().getPipePluginCoordinator().getPipePluginInfo();
+    final PipePluginCoordinator pipePluginCoordinator =
+        env.getConfigManager().getPipeManager().getPipePluginCoordinator();
 
-    pipePluginInfo.acquirePipePluginInfoLock();
+    pipePluginCoordinator.lock();
 
     try {
-      pipePluginInfo.validateBeforeCreatingPipePlugin(
-          pipePluginMeta.getPluginName(), pipePluginMeta.getJarName(), pipePluginMeta.getJarMD5());
-    } catch (PipeManagementException e) {
+      pipePluginCoordinator
+          .getPipePluginInfo()
+          .validateBeforeCreatingPipePlugin(
+              pipePluginMeta.getPluginName(),
+              pipePluginMeta.getJarName(),
+              pipePluginMeta.getJarMD5());
+    } catch (PipeException e) {
       // The pipe plugin has already created, we should end the procedure
       LOGGER.warn(
           "Pipe plugin {} is already created, end the CreatePipePluginProcedure({})",
           pipePluginMeta.getPluginName(),
           pipePluginMeta.getPluginName());
       setFailure(new ProcedureException(e.getMessage()));
-      pipePluginInfo.releasePipePluginInfoLock();
+      pipePluginCoordinator.unlock();
       return Flow.NO_MORE_STATE;
     }
 
@@ -158,7 +162,7 @@ public class CreatePipePluginProcedure extends AbstractNodeProcedure<CreatePipeP
     final ConsensusWriteResponse response =
         configNodeManager.getConsensusManager().write(createPluginPlan);
     if (!response.isSuccessful()) {
-      throw new PipeManagementException(response.getErrorMessage());
+      throw new PipeException(response.getErrorMessage());
     }
 
     setNextState(CreatePipePluginState.CREATE_ON_DATA_NODES);
@@ -177,7 +181,7 @@ public class CreatePipePluginProcedure extends AbstractNodeProcedure<CreatePipeP
       return Flow.HAS_MORE_STATE;
     }
 
-    throw new PipeManagementException(
+    throw new PipeException(
         String.format(
             "Failed to create pipe plugin instance [%s] on data nodes",
             pipePluginMeta.getPluginName()));
@@ -186,11 +190,7 @@ public class CreatePipePluginProcedure extends AbstractNodeProcedure<CreatePipeP
   private Flow executeFromUnlock(ConfigNodeProcedureEnv env) {
     LOGGER.info("CreatePipePluginProcedure: executeFromUnlock({})", pipePluginMeta.getPluginName());
 
-    env.getConfigManager()
-        .getPipeManager()
-        .getPipePluginCoordinator()
-        .getPipePluginInfo()
-        .releasePipePluginInfoLock();
+    env.getConfigManager().getPipeManager().getPipePluginCoordinator().unlock();
 
     return Flow.NO_MORE_STATE;
   }
@@ -214,11 +214,7 @@ public class CreatePipePluginProcedure extends AbstractNodeProcedure<CreatePipeP
   private void rollbackFromLock(ConfigNodeProcedureEnv env) {
     LOGGER.info("CreatePipePluginProcedure: rollbackFromLock({})", pipePluginMeta.getPluginName());
 
-    env.getConfigManager()
-        .getPipeManager()
-        .getPipePluginCoordinator()
-        .getPipePluginInfo()
-        .releasePipePluginInfoLock();
+    env.getConfigManager().getPipeManager().getPipePluginCoordinator().unlock();
   }
 
   private void rollbackFromCreateOnConfigNodes(ConfigNodeProcedureEnv env) {

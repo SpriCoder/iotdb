@@ -44,7 +44,10 @@ public enum TSDataType {
   TEXT((byte) 5),
 
   /** VECTOR */
-  VECTOR((byte) 6);
+  VECTOR((byte) 6),
+
+  /** UNKNOWN */
+  UNKNOWN((byte) 7);
 
   private final byte type;
 
@@ -82,6 +85,8 @@ public enum TSDataType {
         return TSDataType.TEXT;
       case 6:
         return TSDataType.VECTOR;
+      case 7:
+        return TSDataType.UNKNOWN;
       default:
         throw new IllegalArgumentException("Invalid input: " + type);
     }
@@ -137,6 +142,23 @@ public enum TSDataType {
         // For text: return the size of reference here
       case BOOLEAN:
       case TEXT:
+      case VECTOR:
+        return false;
+      default:
+        throw new UnSupportedDataTypeException(this.toString());
+    }
+  }
+
+  /** @return whether a comparable datatype */
+  public boolean isComparable() {
+    switch (this) {
+      case INT32:
+      case INT64:
+      case FLOAT:
+      case DOUBLE:
+      case TEXT:
+      case BOOLEAN:
+        return true;
       case VECTOR:
         return false;
       default:

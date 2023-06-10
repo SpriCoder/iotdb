@@ -19,5 +19,49 @@
 
 package org.apache.iotdb.db.pipe.task;
 
-/** PipeTaskBuilder is used to build a PipeTask. */
-public class PipeTaskBuilder {}
+import org.apache.iotdb.common.rpc.thrift.TConsensusGroupId;
+import org.apache.iotdb.commons.pipe.task.meta.PipeStaticMeta;
+import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
+import org.apache.iotdb.db.pipe.task.stage.PipeTaskCollectorStage;
+import org.apache.iotdb.db.pipe.task.stage.PipeTaskConnectorStage;
+import org.apache.iotdb.db.pipe.task.stage.PipeTaskProcessorStage;
+
+public class PipeTaskBuilder {
+
+  private final PipeStaticMeta pipeStaticMeta;
+  private final TConsensusGroupId dataRegionId;
+  private final PipeTaskMeta pipeTaskMeta;
+
+  public PipeTaskBuilder(
+      PipeStaticMeta pipeStaticMeta, TConsensusGroupId dataRegionId, PipeTaskMeta pipeTaskMeta) {
+    this.pipeStaticMeta = pipeStaticMeta;
+    this.dataRegionId = dataRegionId;
+    this.pipeTaskMeta = pipeTaskMeta;
+  }
+
+  public PipeTask build() {
+    // event flow: collector -> processor -> connector
+
+    // we first build the collector and connector, then build the processor.
+    final PipeTaskCollectorStage collectorStage =
+        new PipeTaskCollectorStage(
+            dataRegionId,
+            pipeTaskMeta,
+            pipeStaticMeta.getCreationTime(),
+            pipeStaticMeta.getCollectorParameters());
+    final PipeTaskConnectorStage connectorStage =
+        new PipeTaskConnectorStage(pipeStaticMeta.getConnectorParameters());
+
+    // the processor connects the collector and connector.
+    final PipeTaskProcessorStage processorStage =
+        new PipeTaskProcessorStage(
+            pipeStaticMeta.getPipeName(),
+            dataRegionId,
+            collectorStage.getEventSupplier(),
+            pipeStaticMeta.getProcessorParameters(),
+            connectorStage.getPipeConnectorPendingQueue());
+
+    return new PipeTask(
+        pipeStaticMeta.getPipeName(), dataRegionId, collectorStage, processorStage, connectorStage);
+  }
+}

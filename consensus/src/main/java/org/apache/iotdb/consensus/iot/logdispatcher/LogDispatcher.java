@@ -22,20 +22,19 @@ package org.apache.iotdb.consensus.iot.logdispatcher;
 import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.commons.client.IClientManager;
 import org.apache.iotdb.commons.concurrent.IoTDBThreadPoolFactory;
+import org.apache.iotdb.commons.concurrent.ThreadName;
 import org.apache.iotdb.commons.service.metric.MetricService;
-import org.apache.iotdb.commons.service.metric.enums.Metric;
-import org.apache.iotdb.commons.service.metric.enums.Tag;
 import org.apache.iotdb.consensus.common.Peer;
 import org.apache.iotdb.consensus.common.request.IndexedConsensusRequest;
 import org.apache.iotdb.consensus.config.IoTConsensusConfig;
 import org.apache.iotdb.consensus.iot.IoTConsensusServerImpl;
+import org.apache.iotdb.consensus.iot.IoTConsensusServerMetrics;
 import org.apache.iotdb.consensus.iot.client.AsyncIoTConsensusServiceClient;
 import org.apache.iotdb.consensus.iot.client.DispatchLogHandler;
 import org.apache.iotdb.consensus.iot.thrift.TLogEntry;
 import org.apache.iotdb.consensus.iot.thrift.TSyncLogEntriesReq;
 import org.apache.iotdb.consensus.iot.wal.ConsensusReqReader;
 import org.apache.iotdb.consensus.iot.wal.GetConsensusReqReaderPlan;
-import org.apache.iotdb.metrics.utils.MetricLevel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,9 +45,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -60,7 +59,7 @@ public class LogDispatcher {
   private static final long DEFAULT_INITIAL_SYNC_INDEX = 0L;
   private final IoTConsensusServerImpl impl;
   private final List<LogDispatcherThread> threads;
-  private final String selfPeerId;
+  private final int selfPeerId;
   private final IClientManager<TEndPoint, AsyncIoTConsensusServiceClient> clientManager;
   private ExecutorService executorService;
 
@@ -68,12 +67,14 @@ public class LogDispatcher {
 
   private final AtomicLong logEntriesFromWAL = new AtomicLong(0);
   private final AtomicLong logEntriesFromQueue = new AtomicLong(0);
+  private final IoTConsensusServerMetrics ioTConsensusServerMetrics;
 
   public LogDispatcher(
       IoTConsensusServerImpl impl,
-      IClientManager<TEndPoint, AsyncIoTConsensusServiceClient> clientManager) {
+      IClientManager<TEndPoint, AsyncIoTConsensusServiceClient> clientManager,
+      IoTConsensusServerMetrics ioTConsensusServerMetrics) {
     this.impl = impl;
-    this.selfPeerId = impl.getThisNode().getEndpoint().toString();
+    this.selfPeerId = impl.getThisNode().getNodeId();
     this.clientManager = clientManager;
     this.threads =
         impl.getConfiguration().stream()
@@ -83,6 +84,7 @@ public class LogDispatcher {
     if (!threads.isEmpty()) {
       initLogSyncThreadPool();
     }
+    this.ioTConsensusServerMetrics = ioTConsensusServerMetrics;
   }
 
   private void initLogSyncThreadPool() {
@@ -92,7 +94,7 @@ public class LogDispatcher {
     // Thus, the size of this threadPool will be the same as the count of LogDispatcherThread.
     this.executorService =
         IoTDBThreadPoolFactory.newCachedThreadPool(
-            "LogDispatcher-" + impl.getThisNode().getGroupId());
+            ThreadName.LOG_DISPATCHER.getName() + "-" + impl.getThisNode().getGroupId());
   }
 
   public synchronized void start() {
@@ -209,21 +211,21 @@ public class LogDispatcher {
 
     private final ConsensusReqReader.ReqIterator walEntryIterator;
 
-    private final LogDispatcherThreadMetrics metrics;
+    private final LogDispatcherThreadMetrics logDispatcherThreadMetrics;
 
     public LogDispatcherThread(Peer peer, IoTConsensusConfig config, long initialSyncIndex) {
       this.peer = peer;
       this.config = config;
-      this.pendingEntries = new LinkedBlockingQueue<>();
+      this.pendingEntries = new ArrayBlockingQueue<>(config.getReplication().getMaxQueueLength());
       this.controller =
           new IndexController(
               impl.getStorageDir(),
               peer,
               initialSyncIndex,
               config.getReplication().getCheckpointGap());
-      this.syncStatus = new SyncStatus(controller, config, impl::getSearchIndex);
+      this.syncStatus = new SyncStatus(controller, config);
       this.walEntryIterator = reader.getReqIterator(START_INDEX);
-      this.metrics = new LogDispatcherThreadMetrics(this);
+      this.logDispatcherThreadMetrics = new LogDispatcherThreadMetrics(this);
     }
 
     public IndexController getController() {
@@ -289,7 +291,7 @@ public class LogDispatcher {
       }
       iotConsensusMemoryManager.free(requestSize, true);
       syncStatus.free();
-      MetricService.getInstance().removeMetricSet(metrics);
+      MetricService.getInstance().removeMetricSet(logDispatcherThreadMetrics);
     }
 
     public void cleanup() throws IOException {
@@ -303,7 +305,7 @@ public class LogDispatcher {
     @Override
     public void run() {
       logger.info("{}: Dispatcher for {} starts", impl.getThisNode(), peer);
-      MetricService.getInstance().addMetricSet(metrics);
+      MetricService.getInstance().addMetricSet(logDispatcherThreadMetrics);
       try {
         Batch batch;
         while (!Thread.interrupted() && !stopped) {
@@ -314,30 +316,17 @@ public class LogDispatcher {
                 pendingEntries.poll(PENDING_REQUEST_TAKING_TIME_OUT_IN_SEC, TimeUnit.SECONDS);
             if (request != null) {
               bufferedEntries.add(request);
-              // If write pressure is low, we simply sleep a little to reduce the number of RPC
-              if (pendingEntries.size() <= config.getReplication().getMaxLogEntriesNumPerBatch()) {
-                Thread.sleep(config.getReplication().getMaxWaitingTimeForAccumulatingBatchInMs());
-              }
             }
           }
-          MetricService.getInstance()
-              .getOrCreateHistogram(
-                  Metric.STAGE.toString(),
-                  MetricLevel.IMPORTANT,
-                  Tag.NAME.toString(),
-                  Metric.IOT_CONSENSUS.toString(),
-                  Tag.TYPE.toString(),
-                  "constructBatch",
-                  Tag.REGION.toString(),
-                  peer.getGroupId().toString())
-              .update((System.nanoTime() - startTime) / batch.getLogEntries().size());
+          logDispatcherThreadMetrics.recordConstructBatchTime(
+              (System.nanoTime() - startTime) / batch.getLogEntries().size());
           // we may block here if the synchronization pipeline is full
           syncStatus.addNextBatch(batch);
           logEntriesFromWAL.addAndGet(batch.getLogEntriesNumFromWAL());
           logEntriesFromQueue.addAndGet(
               batch.getLogEntries().size() - batch.getLogEntriesNumFromWAL());
           // sends batch asynchronously and migrates the retry logic into the callback handler
-          sendBatchAsync(batch, new DispatchLogHandler(this, batch));
+          sendBatchAsync(batch, new DispatchLogHandler(this, logDispatcherThreadMetrics, batch));
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();

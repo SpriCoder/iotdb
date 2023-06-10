@@ -43,6 +43,7 @@ import org.apache.iotdb.confignode.service.thrift.ConfigNodeRPCServiceProcessor;
 import org.apache.iotdb.db.service.metrics.ProcessMetrics;
 import org.apache.iotdb.db.service.metrics.SystemMetrics;
 import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
+import org.apache.iotdb.metrics.metricsets.UpTimeMetrics;
 import org.apache.iotdb.metrics.metricsets.disk.DiskMetrics;
 import org.apache.iotdb.metrics.metricsets.jvm.JvmMetrics;
 import org.apache.iotdb.metrics.metricsets.logback.LogbackMetrics;
@@ -69,6 +70,8 @@ public class ConfigNode implements ConfigNodeMBean {
   private static final int SEED_CONFIG_NODE_ID = 0;
 
   private static final int INIT_NON_SEED_CONFIG_NODE_ID = -1;
+
+  private static final String CONFIGURATION = "IoTDB configuration: {}";
 
   private final String mbeanName =
       String.format(
@@ -120,6 +123,7 @@ public class ConfigNode implements ConfigNodeMBean {
         // Notice: We always set up Seed-ConfigNode's RPC service lastly to ensure
         // that the external service is not provided until ConfigNode is fully available
         setUpRPCService();
+        LOGGER.info(CONFIGURATION, CONF.getConfigMessage());
         LOGGER.info(
             "{} has successfully restarted and joined the cluster: {}.",
             ConfigNodeConstant.GLOBAL_NAME,
@@ -154,7 +158,7 @@ public class ConfigNode implements ConfigNodeMBean {
         // that the external service is not provided until Seed-ConfigNode is fully initialized
         setUpRPCService();
         // The initial startup of Seed-ConfigNode finished
-
+        LOGGER.info(CONFIGURATION, CONF.getConfigMessage());
         LOGGER.info(
             "{} has successfully started and joined the cluster: {}.",
             ConfigNodeConstant.GLOBAL_NAME,
@@ -169,6 +173,7 @@ public class ConfigNode implements ConfigNodeMBean {
       sendRegisterConfigNodeRequest();
       // The initial startup of Non-Seed-ConfigNode is not yet finished,
       // we should wait for leader's scheduling
+      LOGGER.info(CONFIGURATION, CONF.getConfigMessage());
       LOGGER.info(
           "{} {} has registered successfully. Waiting for the leader's scheduling to join the cluster: {}.",
           ConfigNodeConstant.GLOBAL_NAME,
@@ -225,6 +230,7 @@ public class ConfigNode implements ConfigNodeMBean {
     MetricConfigDescriptor.getInstance().getMetricConfig().setNodeId(CONF.getConfigNodeId());
     registerManager.register(MetricService.getInstance());
     // bind predefined metric sets
+    MetricService.getInstance().addMetricSet(new UpTimeMetrics());
     MetricService.getInstance().addMetricSet(new JvmMetrics());
     MetricService.getInstance().addMetricSet(new LogbackMetrics());
     MetricService.getInstance().addMetricSet(new ProcessMetrics());

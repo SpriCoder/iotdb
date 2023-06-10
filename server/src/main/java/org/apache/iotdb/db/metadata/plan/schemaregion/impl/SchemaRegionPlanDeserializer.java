@@ -22,6 +22,7 @@ package org.apache.iotdb.db.metadata.plan.schemaregion.impl;
 import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.path.PathDeserializeUtil;
+import org.apache.iotdb.commons.schema.view.viewExpression.ViewExpression;
 import org.apache.iotdb.db.metadata.logfile.IDeserializer;
 import org.apache.iotdb.db.metadata.plan.schemaregion.ISchemaRegionPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.SchemaRegionPlanType;
@@ -32,6 +33,7 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IAutoCreateDeviceMNo
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeAliasPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeTagOffsetPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateAlignedTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateLogicalViewPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeleteTimeSeriesPlan;
@@ -39,6 +41,9 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeactivateTempla
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeleteTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeleteTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IPreDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IRollbackPreDeleteLogicalViewPlan;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
@@ -157,13 +162,13 @@ public class SchemaRegionPlanDeserializer implements IDeserializer<ISchemaRegion
 
       List<TSDataType> dataTypes = new ArrayList<>();
       for (int i = 0; i < size; i++) {
-        dataTypes.add(TSDataType.values()[buffer.get()]);
+        dataTypes.add(TSDataType.deserialize(buffer.get()));
       }
       createAlignedTimeSeriesPlan.setDataTypes(dataTypes);
 
       List<TSEncoding> encodings = new ArrayList<>();
       for (int i = 0; i < size; i++) {
-        encodings.add(TSEncoding.values()[buffer.get()]);
+        encodings.add(TSEncoding.deserialize(buffer.get()));
       }
       createAlignedTimeSeriesPlan.setEncodings(encodings);
 
@@ -224,8 +229,8 @@ public class SchemaRegionPlanDeserializer implements IDeserializer<ISchemaRegion
         LOGGER.error("Cannot deserialize SchemaRegionPlan from buffer", e);
       }
 
-      createTimeSeriesPlan.setDataType(TSDataType.values()[buffer.get()]);
-      createTimeSeriesPlan.setEncoding(TSEncoding.values()[buffer.get()]);
+      createTimeSeriesPlan.setDataType(TSDataType.deserialize(buffer.get()));
+      createTimeSeriesPlan.setEncoding(TSEncoding.deserialize(buffer.get()));
       createTimeSeriesPlan.setCompressor(CompressionType.deserialize(buffer.get()));
       createTimeSeriesPlan.setTagOffset(buffer.getLong());
 
@@ -336,6 +341,50 @@ public class SchemaRegionPlanDeserializer implements IDeserializer<ISchemaRegion
         result.put(pattern, templateIdList);
       }
       return result;
+    }
+
+    @Override
+    public ISchemaRegionPlan visitCreateLogicalView(
+        ICreateLogicalViewPlan createLogicalViewPlan, ByteBuffer buffer) {
+
+      int viewSize = buffer.getInt();
+      Map<PartialPath, ViewExpression> viewPathToSourceMap = new HashMap<>();
+      for (int i = 0; i < viewSize; i++) {
+        int byteSizeOfPath = buffer.getInt();
+        byte[] bytesOfPath = new byte[byteSizeOfPath];
+        buffer.get(bytesOfPath);
+        try {
+          PartialPath thisPath = new PartialPath(new String(bytesOfPath));
+          ViewExpression thisExp = ViewExpression.deserialize(buffer);
+          viewPathToSourceMap.put(thisPath, thisExp);
+        } catch (IllegalPathException e) {
+          LOGGER.error("Cannot deserialize SchemaRegionPlan from buffer", e);
+        }
+      }
+      createLogicalViewPlan.setViewPathToSourceExpressionMap(viewPathToSourceMap);
+      return createLogicalViewPlan;
+    }
+
+    @Override
+    public ISchemaRegionPlan visitPreDeleteLogicalView(
+        IPreDeleteLogicalViewPlan preDeleteLogicalViewPlan, ByteBuffer buffer) {
+      preDeleteLogicalViewPlan.setPath((PartialPath) PathDeserializeUtil.deserialize(buffer));
+      return preDeleteLogicalViewPlan;
+    }
+
+    @Override
+    public ISchemaRegionPlan visitRollbackPreDeleteLogicalView(
+        IRollbackPreDeleteLogicalViewPlan rollbackPreDeleteLogicalViewPlan, ByteBuffer buffer) {
+      rollbackPreDeleteLogicalViewPlan.setPath(
+          (PartialPath) PathDeserializeUtil.deserialize(buffer));
+      return rollbackPreDeleteLogicalViewPlan;
+    }
+
+    @Override
+    public ISchemaRegionPlan visitDeleteLogicalView(
+        IDeleteLogicalViewPlan deleteLogicalViewPlan, ByteBuffer buffer) {
+      deleteLogicalViewPlan.setPath((PartialPath) PathDeserializeUtil.deserialize(buffer));
+      return deleteLogicalViewPlan;
     }
   }
 }

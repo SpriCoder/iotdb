@@ -19,17 +19,22 @@
 
 package org.apache.iotdb.db.mpp.plan.statement.crud;
 
-import org.apache.iotdb.common.rpc.thrift.TEndPoint;
-import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
-import org.apache.iotdb.commons.partition.DataPartition;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.exception.metadata.DuplicateInsertException;
+import org.apache.iotdb.db.exception.query.QueryProcessException;
+import org.apache.iotdb.db.mpp.plan.analyze.schema.ISchemaValidation;
 import org.apache.iotdb.db.mpp.plan.statement.StatementType;
 import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
-import org.apache.iotdb.db.utils.TimePartitionUtils;
+import org.apache.iotdb.tsfile.exception.NotImplementedException;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class InsertRowsStatement extends InsertBaseStatement {
 
@@ -101,15 +106,82 @@ public class InsertRowsStatement extends InsertBaseStatement {
   }
 
   @Override
-  public List<TEndPoint> collectRedirectInfo(DataPartition dataPartition) {
-    List<TEndPoint> result = new ArrayList<>();
+  public ISchemaValidation getSchemaValidation() {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public List<ISchemaValidation> getSchemaValidationList() {
+    return insertRowStatementList.stream()
+        .map(InsertRowStatement::getSchemaValidation)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public void updateAfterSchemaValidation() throws QueryProcessException {
     for (InsertRowStatement insertRowStatement : insertRowStatementList) {
-      TRegionReplicaSet regionReplicaSet =
-          dataPartition.getDataRegionReplicaSetForWriting(
-              insertRowStatement.devicePath.getFullPath(),
-              TimePartitionUtils.getTimePartition(insertRowStatement.getTime()));
-      result.add(regionReplicaSet.getDataNodeLocations().get(0).getClientRpcEndPoint());
+      insertRowStatement.updateAfterSchemaValidation();
+      if (!this.hasFailedMeasurements() && insertRowStatement.hasFailedMeasurements()) {
+        this.failedMeasurementIndex2Info = insertRowStatement.failedMeasurementIndex2Info;
+      }
     }
-    return result;
+  }
+
+  @Override
+  protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
+    return false;
+  }
+
+  @Override
+  public long getMinTime() {
+    throw new NotImplementedException();
+  }
+
+  @Override
+  public Object getFirstValueOfIndex(int index) {
+    throw new NotImplementedException();
+  }
+
+  @Override
+  public InsertBaseStatement removeLogicalView() {
+    List<InsertRowStatement> mergedList = new ArrayList<>();
+    boolean needSplit = false;
+    for (InsertRowStatement child : this.insertRowStatementList) {
+      List<InsertRowStatement> childSplitResult = child.getSplitList();
+      needSplit = needSplit || child.isNeedSplit();
+      mergedList.addAll(childSplitResult);
+    }
+    if (!needSplit) {
+      return this;
+    }
+    validateInsertRowList(mergedList);
+    InsertRowsStatement splitResult = new InsertRowsStatement();
+    splitResult.setInsertRowStatementList(mergedList);
+    return splitResult;
+  }
+
+  /**
+   * Check given InsertRowStatement list, make sure no duplicate time series in those statements. If
+   * there are duplicate measurements, throw DuplicateInsertException.
+   */
+  public static void validateInsertRowList(List<InsertRowStatement> insertRowList) {
+    if (insertRowList == null) {
+      return;
+    }
+    Map<String, Set<String>> mapFromDeviceToMeasurements = new HashMap<>();
+    for (InsertRowStatement insertRow : insertRowList) {
+      String device = insertRow.devicePath.getFullPath();
+      Set<String> measurementSet = mapFromDeviceToMeasurements.get(device);
+      if (measurementSet == null) {
+        measurementSet = new HashSet<>();
+      }
+      for (String measurement : insertRow.measurements) {
+        boolean notExist = measurementSet.add(measurement);
+        if (!notExist) {
+          throw new RuntimeException(new DuplicateInsertException(device, measurement));
+        }
+      }
+      mapFromDeviceToMeasurements.put(device, measurementSet);
+    }
   }
 }

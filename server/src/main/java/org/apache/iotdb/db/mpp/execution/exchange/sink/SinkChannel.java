@@ -27,7 +27,8 @@ import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.mpp.common.FragmentInstanceId;
 import org.apache.iotdb.db.mpp.execution.exchange.MPPDataExchangeManager.SinkListener;
 import org.apache.iotdb.db.mpp.execution.memory.LocalMemoryManager;
-import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet;
+import org.apache.iotdb.db.mpp.metric.DataExchangeCountMetricSet;
 import org.apache.iotdb.db.utils.SetThreadName;
 import org.apache.iotdb.mpp.rpc.thrift.TEndOfDataBlockEvent;
 import org.apache.iotdb.mpp.rpc.thrift.TFragmentInstanceId;
@@ -49,7 +50,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static org.apache.iotdb.db.mpp.common.FragmentInstanceId.createFullId;
 import static org.apache.iotdb.db.mpp.metric.DataExchangeCostMetricSet.SEND_NEW_DATA_BLOCK_EVENT_TASK_CALLER;
@@ -102,11 +105,16 @@ public class SinkChannel implements ISinkChannel {
 
   private boolean noMoreTsBlocks = false;
 
+  private final AtomicBoolean invokedOnFinished = new AtomicBoolean(false);
+
   /** max bytes this SinkChannel can reserve. */
   private long maxBytesCanReserve =
       IoTDBDescriptor.getInstance().getConfig().getMaxBytesPerFragmentInstance();
 
-  private static final QueryMetricsManager QUERY_METRICS = QueryMetricsManager.getInstance();
+  private static final DataExchangeCostMetricSet DATA_EXCHANGE_COST_METRIC_SET =
+      DataExchangeCostMetricSet.getInstance();
+  private static final DataExchangeCountMetricSet DATA_EXCHANGE_COUNT_METRIC_SET =
+      DataExchangeCountMetricSet.getInstance();
 
   public SinkChannel(
       TEndPoint remoteEndpoint,
@@ -149,6 +157,11 @@ public class SinkChannel implements ISinkChannel {
   @Override
   public synchronized ListenableFuture<?> isFull() {
     checkState();
+    // blocked could be null if this channel is closed before it is opened by ShuffleSinkHandle
+    // return immediateVoidFuture() to avoid NPE
+    if (closed) {
+      return immediateVoidFuture();
+    }
     return nonCancellationPropagating(blocked);
   }
 
@@ -194,7 +207,7 @@ public class SinkChannel implements ISinkChannel {
       // TODO: consider merge multiple NewDataBlockEvent for less network traffic.
       submitSendNewDataBlockEventTask(startSequenceId, ImmutableList.of(retainedSizeInBytes));
     } finally {
-      QUERY_METRICS.recordDataExchangeCost(
+      DATA_EXCHANGE_COST_METRIC_SET.recordDataExchangeCost(
           SINK_HANDLE_SEND_TSBLOCK_REMOTE, System.nanoTime() - startTime);
     }
   }
@@ -253,9 +266,15 @@ public class SinkChannel implements ISinkChannel {
               bufferRetainedSizeInBytes);
       bufferRetainedSizeInBytes = 0;
     }
-    sinkListener.onFinish(this);
+    invokeOnFinished();
     closed = true;
     LOGGER.debug("[EndCloseSinkChannel]");
+  }
+
+  private void invokeOnFinished() {
+    if (invokedOnFinished.compareAndSet(false, true)) {
+      sinkListener.onFinish(this);
+    }
   }
 
   @Override
@@ -323,20 +342,21 @@ public class SinkChannel implements ISinkChannel {
         iterator.remove();
         LOGGER.debug("[ACKTsBlock] {}.", entry.getKey());
       }
+
+      // there may exist duplicate ack message in network caused by caller retrying, if so duplicate
+      // ack message's freedBytes may be zero
+      if (freedBytes > 0) {
+        localMemoryManager
+            .getQueryPool()
+            .free(
+                localFragmentInstanceId.getQueryId(),
+                fullFragmentInstanceId,
+                localPlanNodeId,
+                freedBytes);
+      }
     }
     if (isFinished()) {
-      sinkListener.onFinish(this);
-    }
-    // there may exist duplicate ack message in network caused by caller retrying, if so duplicate
-    // ack message's freedBytes may be zero
-    if (freedBytes > 0) {
-      localMemoryManager
-          .getQueryPool()
-          .free(
-              localFragmentInstanceId.getQueryId(),
-              fullFragmentInstanceId,
-              localPlanNodeId,
-              freedBytes);
+      invokeOnFinished();
     }
   }
 
@@ -463,9 +483,10 @@ public class SinkChannel implements ISinkChannel {
               sinkListener.onFailure(SinkChannel.this, e);
             }
           } finally {
-            QUERY_METRICS.recordDataExchangeCost(
+            DATA_EXCHANGE_COST_METRIC_SET.recordDataExchangeCost(
                 SEND_NEW_DATA_BLOCK_EVENT_TASK_CALLER, System.nanoTime() - startTime);
-            QUERY_METRICS.recordDataBlockNum(SEND_NEW_DATA_BLOCK_NUM_CALLER, blockSizes.size());
+            DATA_EXCHANGE_COUNT_METRIC_SET.recordDataBlockNum(
+                SEND_NEW_DATA_BLOCK_NUM_CALLER, blockSizes.size());
           }
         }
       }
@@ -512,7 +533,7 @@ public class SinkChannel implements ISinkChannel {
         }
         noMoreTsBlocks = true;
         if (isFinished()) {
-          sinkListener.onFinish(SinkChannel.this);
+          invokeOnFinished();
         }
         sinkListener.onEndOfBlocks(SinkChannel.this);
       }

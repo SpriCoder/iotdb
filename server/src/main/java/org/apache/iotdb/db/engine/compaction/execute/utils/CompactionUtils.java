@@ -19,11 +19,12 @@
 package org.apache.iotdb.db.engine.compaction.execute.utils;
 
 import org.apache.iotdb.commons.conf.IoTDBConstant;
-import org.apache.iotdb.db.engine.TsFileMetricManager;
 import org.apache.iotdb.db.engine.modification.Modification;
 import org.apache.iotdb.db.engine.modification.ModificationFile;
 import org.apache.iotdb.db.engine.storagegroup.TsFileManager;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
+import org.apache.iotdb.db.engine.storagegroup.timeindex.DeviceTimeIndex;
+import org.apache.iotdb.db.service.metrics.FileMetrics;
 import org.apache.iotdb.tsfile.common.constant.TsFileConstant;
 import org.apache.iotdb.tsfile.exception.write.WriteProcessException;
 import org.apache.iotdb.tsfile.file.metadata.ChunkMetadata;
@@ -121,9 +122,8 @@ public class CompactionUtils {
       modifications.addAll(seqModifications);
       updateOneTargetMods(targetResource, modifications);
       if (modifications.size() > 0) {
-        TsFileMetricManager.getInstance().increaseModFileNum(1);
-        TsFileMetricManager.getInstance()
-            .increaseModFileSize(targetResource.getModFile().getSize());
+        FileMetrics.getInstance().increaseModFileNum(1);
+        FileMetrics.getInstance().increaseModFileSize(targetResource.getModFile().getSize());
       }
       modifications.removeAll(seqModifications);
     }
@@ -144,8 +144,8 @@ public class CompactionUtils {
     }
     updateOneTargetMods(targetTsFile, modifications);
     if (modifications.size() > 0) {
-      TsFileMetricManager.getInstance().increaseModFileNum(1);
-      TsFileMetricManager.getInstance().increaseModFileSize(targetTsFile.getModFile().getSize());
+      FileMetrics.getInstance().increaseModFileNum(1);
+      FileMetrics.getInstance().increaseModFileSize(targetTsFile.getModFile().getSize());
     }
   }
 
@@ -208,9 +208,8 @@ public class CompactionUtils {
 
       ModificationFile normalModification = ModificationFile.getNormalMods(tsFileResource);
       if (normalModification.exists()) {
-        TsFileMetricManager.getInstance().decreaseModFileNum(1);
-        TsFileMetricManager.getInstance()
-            .decreaseModFileSize(tsFileResource.getModFile().getSize());
+        FileMetrics.getInstance().decreaseModFileNum(1);
+        FileMetrics.getInstance().decreaseModFileSize(tsFileResource.getModFile().getSize());
         normalModification.remove();
       }
     }
@@ -233,6 +232,20 @@ public class CompactionUtils {
     }
   }
 
+  public static void updateProgressIndex(
+      List<TsFileResource> targetResources,
+      List<TsFileResource> seqResources,
+      List<TsFileResource> unseqResources) {
+    for (TsFileResource targetResource : targetResources) {
+      for (TsFileResource unseqResource : unseqResources) {
+        targetResource.updateProgressIndex(unseqResource.getMaxProgressIndexAfterClose());
+      }
+      for (TsFileResource seqResource : seqResources) {
+        targetResource.updateProgressIndex(seqResource.getMaxProgressIndexAfterClose());
+      }
+    }
+  }
+
   public static void updatePlanIndexes(
       List<TsFileResource> targetResources,
       List<TsFileResource> seqResources,
@@ -243,8 +256,7 @@ public class CompactionUtils {
     // however, since the data of unseq files are mixed together, we won't be able to know
     // which files are exactly contained in the new file, so we have to record all unseq files
     // in the new file
-    for (int i = 0; i < targetResources.size(); i++) {
-      TsFileResource targetResource = targetResources.get(i);
+    for (TsFileResource targetResource : targetResources) {
       for (TsFileResource unseqResource : unseqResources) {
         targetResource.updatePlanIndexes(unseqResource);
       }
@@ -255,25 +267,24 @@ public class CompactionUtils {
   }
 
   public static boolean validateTsFileResources(
-      TsFileManager manager, String storageGroupName, long timePartition) {
+      TsFileManager manager, String storageGroupName, long timePartition) throws IOException {
     List<TsFileResource> resources =
         manager.getOrCreateSequenceListByTimePartition(timePartition).getArrayList();
-    resources.sort(
-        (f1, f2) ->
-            Long.compareUnsigned(
-                Long.parseLong(f1.getTsFile().getName().split("-")[0]),
-                Long.parseLong(f2.getTsFile().getName().split("-")[0])));
+
     // deviceID -> <TsFileResource, last end time>
     Map<String, Pair<TsFileResource, Long>> lastEndTimeMap = new HashMap<>();
     for (TsFileResource resource : resources) {
+      DeviceTimeIndex timeIndex;
       if (resource.getTimeIndexType() != 1) {
-        // if time index is not device time index, then skip it
-        continue;
+        // if time index is not device time index, then deserialize it from resource file
+        timeIndex = resource.buildDeviceTimeIndex();
+      } else {
+        timeIndex = (DeviceTimeIndex) resource.getTimeIndex();
       }
-      Set<String> devices = resource.getDevices();
+      Set<String> devices = timeIndex.getDevices();
       for (String device : devices) {
-        long currentStartTime = resource.getStartTime(device);
-        long currentEndTime = resource.getEndTime(device);
+        long currentStartTime = timeIndex.getStartTime(device);
+        long currentEndTime = timeIndex.getEndTime(device);
         Pair<TsFileResource, Long> lastDeviceInfo =
             lastEndTimeMap.computeIfAbsent(device, x -> new Pair<>(null, Long.MIN_VALUE));
         long lastEndTime = lastDeviceInfo.right;

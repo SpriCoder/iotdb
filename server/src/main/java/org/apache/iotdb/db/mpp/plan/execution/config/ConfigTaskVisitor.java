@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.mpp.plan.execution.config;
 
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.CountDatabaseTask;
+import org.apache.iotdb.db.mpp.plan.execution.config.metadata.CountTimeSlotListTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.CreateContinuousQueryTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.CreateFunctionTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.CreatePipePluginTask;
@@ -53,6 +54,7 @@ import org.apache.iotdb.db.mpp.plan.execution.config.metadata.model.CreateModelT
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.model.DropModelTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.model.ShowModelsTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.model.ShowTrailsTask;
+import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.AlterSchemaTemplateTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.CreateSchemaTemplateTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.DeactivateSchemaTemplateTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.DropSchemaTemplateTask;
@@ -61,6 +63,9 @@ import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.ShowNodes
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.ShowPathSetTemplateTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.ShowSchemaTemplateTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.metadata.template.UnsetSchemaTemplateTask;
+import org.apache.iotdb.db.mpp.plan.execution.config.metadata.view.AlterLogicalViewTask;
+import org.apache.iotdb.db.mpp.plan.execution.config.metadata.view.DeleteLogicalViewTask;
+import org.apache.iotdb.db.mpp.plan.execution.config.metadata.view.RenameLogicalViewTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.sys.AuthorizerTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.sys.ClearCacheTask;
 import org.apache.iotdb.db.mpp.plan.execution.config.sys.FlushTask;
@@ -84,6 +89,7 @@ import org.apache.iotdb.db.mpp.plan.statement.Statement;
 import org.apache.iotdb.db.mpp.plan.statement.StatementNode;
 import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CountDatabaseStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.CountTimeSlotListStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreateContinuousQueryStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreateFunctionStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreatePipePluginStatement;
@@ -116,6 +122,7 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.model.CreateModelStatemen
 import org.apache.iotdb.db.mpp.plan.statement.metadata.model.DropModelStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.model.ShowModelsStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.model.ShowTrailsStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.template.AlterSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.CreateSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.DeactivateTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.DropSchemaTemplateStatement;
@@ -124,6 +131,9 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowNodesInSchem
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowPathSetTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.UnsetSchemaTemplateStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.AlterLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.DeleteLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.RenameLogicalViewStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.AuthorStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.ClearCacheStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.FlushStatement;
@@ -333,7 +343,7 @@ public class ConfigTaskVisitor
   @Override
   public IConfigTask visitSetSchemaTemplate(
       SetSchemaTemplateStatement setSchemaTemplateStatement, TaskContext context) {
-    return new SetSchemaTemplateTask(setSchemaTemplateStatement);
+    return new SetSchemaTemplateTask(context.getQueryId(), setSchemaTemplateStatement);
   }
 
   @Override
@@ -358,6 +368,12 @@ public class ConfigTaskVisitor
   public IConfigTask visitDropSchemaTemplate(
       DropSchemaTemplateStatement dropSchemaTemplateStatement, TaskContext context) {
     return new DropSchemaTemplateTask(dropSchemaTemplateStatement);
+  }
+
+  @Override
+  public IConfigTask visitAlterSchemaTemplate(
+      AlterSchemaTemplateStatement alterSchemaTemplateStatement, TaskContext context) {
+    return new AlterSchemaTemplateTask(alterSchemaTemplateStatement, context.getQueryId());
   }
 
   @Override
@@ -422,6 +438,24 @@ public class ConfigTaskVisitor
   }
 
   @Override
+  public IConfigTask visitDeleteLogicalView(
+      DeleteLogicalViewStatement deleteLogicalViewStatement, TaskContext context) {
+    return new DeleteLogicalViewTask(context.getQueryId(), deleteLogicalViewStatement);
+  }
+
+  @Override
+  public IConfigTask visitRenameLogicalView(
+      RenameLogicalViewStatement renameLogicalViewStatement, TaskContext context) {
+    return new RenameLogicalViewTask(context.queryId, renameLogicalViewStatement);
+  }
+
+  @Override
+  public IConfigTask visitAlterLogicalView(
+      AlterLogicalViewStatement alterLogicalViewStatement, TaskContext context) {
+    return new AlterLogicalViewTask(context.queryId, alterLogicalViewStatement);
+  }
+
+  @Override
   public IConfigTask visitGetRegionId(
       GetRegionIdStatement getRegionIdStatement, TaskContext context) {
     return new GetRegionIdTask(getRegionIdStatement);
@@ -437,6 +471,11 @@ public class ConfigTaskVisitor
   public IConfigTask visitGetTimeSlotList(
       GetTimeSlotListStatement getTimeSlotListStatement, TaskContext context) {
     return new GetTimeSlotListTask(getTimeSlotListStatement);
+  }
+
+  public IConfigTask visitCountTimeSlotList(
+      CountTimeSlotListStatement countTimeSlotListStatement, TaskContext context) {
+    return new CountTimeSlotListTask(countTimeSlotListStatement);
   }
 
   @Override

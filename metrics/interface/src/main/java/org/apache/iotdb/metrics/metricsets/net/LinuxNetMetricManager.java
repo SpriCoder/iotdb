@@ -19,8 +19,10 @@
 
 package org.apache.iotdb.metrics.metricsets.net;
 
+import org.apache.iotdb.metrics.MetricConstant;
 import org.apache.iotdb.metrics.config.MetricConfig;
 import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
+import org.apache.iotdb.metrics.utils.MetricLevel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +54,6 @@ public class LinuxNetMetricManager implements INetMetricManager {
 
   private static final String BYTES = "bytes";
   private static final String PACKETS = "packets";
-  private static final long UPDATE_INTERVAL = 10_000L;
 
   private static final int IFACE_NAME_INDEX = 0;
 
@@ -126,7 +127,7 @@ public class LinuxNetMetricManager implements INetMetricManager {
   }
 
   private void checkUpdate() {
-    if (System.currentTimeMillis() - lastUpdateTime >= UPDATE_INTERVAL) {
+    if (System.currentTimeMillis() - lastUpdateTime >= MetricConstant.UPDATE_INTERVAL) {
       updateNetStatus();
     }
   }
@@ -215,20 +216,22 @@ public class LinuxNetMetricManager implements INetMetricManager {
       log.error("Meets error when reading {} for net status", NET_STATUS_PATH, e);
     }
 
-    // update socket num
-    try {
-      Process process = Runtime.getRuntime().exec(this.getConnectNumCmd);
-      StringBuilder result = new StringBuilder();
-      try (BufferedReader input =
-          new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-        String line;
-        while ((line = input.readLine()) != null) {
-          result.append(line);
+    if (MetricLevel.higherOrEqual(MetricLevel.NORMAL, METRIC_CONFIG.getMetricLevel())) {
+      // update socket num
+      try {
+        Process process = Runtime.getRuntime().exec(this.getConnectNumCmd);
+        StringBuilder result = new StringBuilder();
+        try (BufferedReader input =
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+          String line;
+          while ((line = input.readLine()) != null) {
+            result.append(line);
+          }
         }
+        this.connectionNum = Integer.parseInt(result.toString().trim());
+      } catch (IOException e) {
+        log.error("Failed to get socket num", e);
       }
-      this.connectionNum = Integer.parseInt(result.toString().trim());
-    } catch (IOException e) {
-      log.error("Failed to get socket num", e);
     }
   }
 }

@@ -38,6 +38,7 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.CountDevicesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CountLevelTimeSeriesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CountNodesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CountTimeSeriesStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.CountTimeSlotListStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreateAlignedTimeSeriesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreateContinuousQueryStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.CreateFunctionStatement;
@@ -78,6 +79,7 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.model.DropModelStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.model.ShowModelsStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.model.ShowTrailsStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ActivateTemplateStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.template.AlterSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.BatchActivateTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.CreateSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.DeactivateTemplateStatement;
@@ -88,6 +90,11 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowPathSetTempl
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowPathsUsingTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.ShowSchemaTemplateStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.template.UnsetSchemaTemplateStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.AlterLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.CreateLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.DeleteLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.RenameLogicalViewStatement;
+import org.apache.iotdb.db.mpp.plan.statement.metadata.view.ShowLogicalViewStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.AuthorStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.ClearCacheStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.ExplainStatement;
@@ -236,6 +243,30 @@ public abstract class StatementVisitor<R, C> {
 
   public R visitShowPipePlugins(ShowPipePluginsStatement showPipePluginsStatement, C context) {
     return visitStatement(showPipePluginsStatement, context);
+  }
+
+  // Create Logical View
+  public R visitCreateLogicalView(
+      CreateLogicalViewStatement createLogicalViewStatement, C context) {
+    return visitStatement(createLogicalViewStatement, context);
+  }
+
+  public R visitDeleteLogicalView(
+      DeleteLogicalViewStatement deleteLogicalViewStatement, C context) {
+    return visitStatement(deleteLogicalViewStatement, context);
+  }
+
+  public R visitShowLogicalView(ShowLogicalViewStatement showLogicalViewStatement, C context) {
+    return visitStatement(showLogicalViewStatement, context);
+  }
+
+  public R visitRenameLogicalView(
+      RenameLogicalViewStatement renameLogicalViewStatement, C context) {
+    return visitStatement(renameLogicalViewStatement, context);
+  }
+
+  public R visitAlterLogicalView(AlterLogicalViewStatement alterLogicalViewStatement, C context) {
+    return visitStatement(alterLogicalViewStatement, context);
   }
 
   // ML Model
@@ -434,6 +465,11 @@ public abstract class StatementVisitor<R, C> {
     return visitStatement(showPathsUsingTemplateStatement, context);
   }
 
+  public R visitAlterSchemaTemplate(
+      AlterSchemaTemplateStatement alterSchemaTemplateStatement, C context) {
+    return visitStatement(alterSchemaTemplateStatement, context);
+  }
+
   public R visitShowPipeSink(ShowPipeSinkStatement showPipeSinkStatement, C context) {
     return visitStatement(showPipeSinkStatement, context);
   }
@@ -481,6 +517,11 @@ public abstract class StatementVisitor<R, C> {
 
   public R visitGetTimeSlotList(GetTimeSlotListStatement getTimeSlotListStatement, C context) {
     return visitStatement(getTimeSlotListStatement, context);
+  }
+
+  public R visitCountTimeSlotList(
+      CountTimeSlotListStatement countTimeSlotListStatement, C context) {
+    return visitStatement(countTimeSlotListStatement, context);
   }
 
   public R visitMigrateRegion(MigrateRegionStatement migrateRegionStatement, C context) {

@@ -20,7 +20,7 @@ package org.apache.iotdb.consensus.ratis;
 
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
-import org.apache.iotdb.commons.service.metric.enums.PerformanceOverviewMetrics;
+import org.apache.iotdb.commons.service.metric.PerformanceOverviewMetrics;
 import org.apache.iotdb.consensus.IStateMachine;
 import org.apache.iotdb.consensus.common.DataSet;
 import org.apache.iotdb.consensus.common.request.ByteBufferConsensusRequest;
@@ -134,7 +134,7 @@ public class ApplicationStateMachineProxy extends BaseStateMachine {
     }
 
     Message ret = null;
-    waitUntilSystemNotReadOnly();
+    waitUntilSystemAllowApply();
     TSStatus finalStatus = null;
     boolean shouldRetry = false;
     boolean firstTry = true;
@@ -169,8 +169,8 @@ public class ApplicationStateMachineProxy extends BaseStateMachine {
             new ResponseMessage(
                 new TSStatus(TSStatusCode.INTERNAL_SERVER_ERROR.getStatusCode())
                     .setMessage("internal error. statemachine throws a runtime exception: " + rte));
-        if (applicationStateMachine.isReadOnly()) {
-          waitUntilSystemNotReadOnly();
+        if (Utils.stallApply()) {
+          waitUntilSystemAllowApply();
           shouldRetry = true;
         } else {
           break;
@@ -191,8 +191,8 @@ public class ApplicationStateMachineProxy extends BaseStateMachine {
     return CompletableFuture.completedFuture(ret);
   }
 
-  private void waitUntilSystemNotReadOnly() {
-    while (applicationStateMachine.isReadOnly()) {
+  private void waitUntilSystemAllowApply() {
+    while (Utils.stallApply()) {
       try {
         TimeUnit.SECONDS.sleep(60);
       } catch (InterruptedException e) {

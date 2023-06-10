@@ -25,6 +25,7 @@ import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.exception.runtime.ThriftSerDeException;
+import org.apache.iotdb.commons.service.metric.MetricService;
 import org.apache.iotdb.commons.utils.ThriftConfigNodeSerDeUtils;
 import org.apache.iotdb.confignode.client.DataNodeRequestType;
 import org.apache.iotdb.confignode.client.async.AsyncDataNodeClientPool;
@@ -91,7 +92,7 @@ public class DeleteDatabaseProcedure
         case PRE_DELETE_DATABASE:
           LOG.info(
               "[DeleteDatabaseProcedure] Pre delete database: {}", deleteDatabaseSchema.getName());
-          env.preDelete(
+          env.preDeleteDatabase(
               PreDeleteDatabasePlan.PreDeleteType.EXECUTE, deleteDatabaseSchema.getName());
           setNextState(DeleteStorageGroupState.INVALIDATE_CACHE);
           break;
@@ -120,12 +121,10 @@ public class DeleteDatabaseProcedure
               regionReplicaSet -> {
                 // Clear heartbeat cache along the way
                 env.getConfigManager()
-                    .getPartitionManager()
+                    .getLoadManager()
                     .removeRegionGroupCache(regionReplicaSet.getRegionId());
                 env.getConfigManager()
                     .getLoadManager()
-                    .getRouteBalancer()
-                    .getRegionRouteMap()
                     .removeRegionRouteCache(regionReplicaSet.getRegionId());
 
                 if (regionReplicaSet
@@ -150,10 +149,12 @@ public class DeleteDatabaseProcedure
           }
 
           // Delete DatabasePartitionTable
-          final TSStatus deleteConfigResult = env.deleteConfig(deleteDatabaseSchema.getName());
+          final TSStatus deleteConfigResult =
+              env.deleteDatabaseConfig(deleteDatabaseSchema.getName());
 
           // Delete Database metrics
-          PartitionMetrics.unbindDatabasePartitionMetrics(deleteDatabaseSchema.getName());
+          PartitionMetrics.unbindDatabasePartitionMetrics(
+              MetricService.getInstance(), deleteDatabaseSchema.getName());
 
           // try sync delete schema region
           AsyncClientHandler<TConsensusGroupId, TSStatus> asyncClientHandler =
@@ -237,7 +238,8 @@ public class DeleteDatabaseProcedure
       case INVALIDATE_CACHE:
         LOG.info(
             "[DeleteDatabaseProcedure] Rollback to preDeleted: {}", deleteDatabaseSchema.getName());
-        env.preDelete(PreDeleteDatabasePlan.PreDeleteType.ROLLBACK, deleteDatabaseSchema.getName());
+        env.preDeleteDatabase(
+            PreDeleteDatabasePlan.PreDeleteType.ROLLBACK, deleteDatabaseSchema.getName());
         break;
       default:
         break;

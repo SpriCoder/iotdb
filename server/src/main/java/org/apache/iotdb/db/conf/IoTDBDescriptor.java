@@ -27,7 +27,7 @@ import org.apache.iotdb.commons.utils.NodeUrlUtils;
 import org.apache.iotdb.confignode.rpc.thrift.TCQConfig;
 import org.apache.iotdb.confignode.rpc.thrift.TGlobalConfig;
 import org.apache.iotdb.confignode.rpc.thrift.TRatisConfig;
-import org.apache.iotdb.db.conf.directories.DirectoryManager;
+import org.apache.iotdb.db.conf.directories.TierManager;
 import org.apache.iotdb.db.engine.StorageEngine;
 import org.apache.iotdb.db.engine.compaction.execute.performer.constant.CrossCompactionPerformer;
 import org.apache.iotdb.db.engine.compaction.execute.performer.constant.InnerSeqCompactionPerformer;
@@ -37,6 +37,7 @@ import org.apache.iotdb.db.engine.compaction.selector.constant.CrossCompactionSe
 import org.apache.iotdb.db.engine.compaction.selector.constant.InnerSequenceCompactionSelector;
 import org.apache.iotdb.db.engine.compaction.selector.constant.InnerUnsequenceCompactionSelector;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
+import org.apache.iotdb.db.metadata.rescon.DataNodeSchemaQuotaManager;
 import org.apache.iotdb.db.rescon.SystemInfo;
 import org.apache.iotdb.db.service.metrics.IoTDBInternalLocalReporter;
 import org.apache.iotdb.db.utils.DateTimeUtils;
@@ -66,6 +67,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 import java.util.ServiceLoader;
 
@@ -199,7 +202,17 @@ public class IoTDBDescriptor {
   }
 
   public void loadProperties(Properties properties) {
-
+    conf.setClusterSchemaLimitLevel(
+        properties
+            .getProperty("cluster_schema_limit_level", conf.getClusterSchemaLimitLevel())
+            .trim());
+    conf.setClusterSchemaLimitThreshold(
+        Long.parseLong(
+            properties
+                .getProperty(
+                    "cluster_schema_limit_threshold",
+                    Long.toString(conf.getClusterSchemaLimitThreshold()))
+                .trim()));
     conf.setClusterName(
         properties.getProperty(IoTDBConstant.CLUSTER_NAME, conf.getClusterName()).trim());
 
@@ -358,8 +371,14 @@ public class IoTDBDescriptor {
 
     conf.setQueryDir(
         FilePathUtils.regularizePath(conf.getSystemDir() + IoTDBConstant.QUERY_FOLDER_NAME));
-
-    conf.setDataDirs(properties.getProperty("dn_data_dirs", conf.getDataDirs()[0]).split(","));
+    String[] defaultTierDirs = new String[conf.getTierDataDirs().length];
+    for (int i = 0; i < defaultTierDirs.length; ++i) {
+      defaultTierDirs[i] = String.join(",", conf.getTierDataDirs()[i]);
+    }
+    conf.setTierDataDirs(
+        parseDataDirs(
+            properties.getProperty(
+                "dn_data_dirs", String.join(IoTDBConstant.TIER_SEPARATOR, defaultTierDirs))));
 
     conf.setConsensusDir(properties.getProperty("dn_consensus_dir", conf.getConsensusDir()));
 
@@ -501,6 +520,12 @@ public class IoTDBDescriptor {
         CompactionPriority.valueOf(
             properties.getProperty(
                 "compaction_priority", conf.getCompactionPriority().toString())));
+
+    conf.setEnableCompactionMemControl(
+        Boolean.parseBoolean(
+            properties.getProperty(
+                "enable_compaction_mem_control",
+                Boolean.toString(conf.isEnableCompactionMemControl()))));
 
     int subtaskNum =
         Integer.parseInt(
@@ -670,6 +695,11 @@ public class IoTDBDescriptor {
             properties.getProperty(
                 "max_cross_compaction_candidate_file_size",
                 Long.toString(conf.getMaxCrossCompactionCandidateFileSize()))));
+    conf.setMinCrossCompactionUnseqFileLevel(
+        Integer.parseInt(
+            properties.getProperty(
+                "min_cross_compaction_unseq_file_level",
+                Integer.toString(conf.getMinCrossCompactionUnseqFileLevel()))));
 
     conf.setCompactionWriteThroughputMbPerSec(
         Integer.parseInt(
@@ -745,6 +775,9 @@ public class IoTDBDescriptor {
 
     conf.setTsFileStorageFs(
         properties.getProperty("tsfile_storage_fs", conf.getTsFileStorageFs().toString()));
+    conf.setEnableHDFS(
+        Boolean.parseBoolean(
+            properties.getProperty("enable_hdfs", String.valueOf(conf.isEnableHDFS()))));
     conf.setCoreSitePath(properties.getProperty("core_site_path", conf.getCoreSitePath()));
     conf.setHdfsSitePath(properties.getProperty("hdfs_site_path", conf.getHdfsSitePath()));
     conf.setHdfsIp(properties.getProperty("hdfs_ip", conf.getRawHDFSIp()).split(","));
@@ -767,6 +800,12 @@ public class IoTDBDescriptor {
         properties.getProperty("kerberos_keytab_file_path", conf.getKerberosKeytabFilePath()));
     conf.setKerberosPrincipal(
         properties.getProperty("kerberos_principal", conf.getKerberosPrincipal()));
+
+    // the size of device path cache
+    conf.setDevicePathCacheSize(
+        Integer.parseInt(
+            properties.getProperty(
+                "device_path_cache_size", String.valueOf(conf.getDevicePathCacheSize()))));
 
     // the num of memtables in each database
     conf.setConcurrentWritingTimePartition(
@@ -934,11 +973,13 @@ public class IoTDBDescriptor {
     conf.setExtPipeDir(properties.getProperty("ext_pipe_dir", conf.getExtPipeDir()).trim());
 
     // At the same time, set TSFileConfig
-    TSFileDescriptor.getInstance()
-        .getConfig()
-        .setTSFileStorageFs(
-            FSType.valueOf(
-                properties.getProperty("tsfile_storage_fs", conf.getTsFileStorageFs().name())));
+    List<FSType> fsTypes = new ArrayList<>();
+    fsTypes.add(FSType.LOCAL);
+    if (Boolean.parseBoolean(
+        properties.getProperty("enable_hdfs", String.valueOf(conf.isEnableHDFS())))) {
+      fsTypes.add(FSType.HDFS);
+    }
+    TSFileDescriptor.getInstance().getConfig().setTSFileStorageFs(fsTypes.toArray(new FSType[0]));
     TSFileDescriptor.getInstance()
         .getConfig()
         .setCoreSitePath(properties.getProperty("core_site_path", conf.getCoreSitePath()));
@@ -1037,15 +1078,57 @@ public class IoTDBDescriptor {
     // author cache
     loadAuthorCache(properties);
 
-    conf.setTimePartitionInterval(
-        DateTimeUtils.convertMilliTimeWithPrecision(
-            conf.getTimePartitionInterval(), conf.getTimestampPrecision()));
-
     conf.setQuotaEnable(
         Boolean.parseBoolean(
             properties.getProperty("quota_enable", String.valueOf(conf.isQuotaEnable()))));
 
+    // the buffer for sort operator to calculate
+    conf.setSortBufferSize(
+        Long.parseLong(
+            properties
+                .getProperty("sort_buffer_size_in_bytes", Long.toString(conf.getSortBufferSize()))
+                .trim()));
+
+    // tmp filePath for sort operator
+    conf.setSortTmpDir(properties.getProperty("sort_tmp_dir", conf.getSortTmpDir()));
+
     conf.setRateLimiterType(properties.getProperty("rate_limiter_type", conf.getRateLimiterType()));
+
+    conf.setDataNodeSchemaCacheEvictionPolicy(
+        properties.getProperty(
+            "datanode_schema_cache_eviction_policy", conf.getDataNodeSchemaCacheEvictionPolicy()));
+
+    loadIoTConsensusProps(properties);
+  }
+
+  private void loadIoTConsensusProps(Properties properties) {
+    conf.setMaxLogEntriesNumPerBatch(
+        Integer.parseInt(
+            properties
+                .getProperty(
+                    "data_region_iot_max_log_entries_num_per_batch",
+                    String.valueOf(conf.getMaxLogEntriesNumPerBatch()))
+                .trim()));
+    conf.setMaxSizePerBatch(
+        Integer.parseInt(
+            properties
+                .getProperty(
+                    "data_region_iot_max_size_per_batch", String.valueOf(conf.getMaxSizePerBatch()))
+                .trim()));
+    conf.setMaxPendingBatchesNum(
+        Integer.parseInt(
+            properties
+                .getProperty(
+                    "data_region_iot_max_pending_batches_num",
+                    String.valueOf(conf.getMaxPendingBatchesNum()))
+                .trim()));
+    conf.setMaxMemoryRatioForQueue(
+        Double.parseDouble(
+            properties
+                .getProperty(
+                    "data_region_iot_max_memory_ratio_for_queue",
+                    String.valueOf(conf.getMaxMemoryRatioForQueue()))
+                .trim()));
   }
 
   private void loadAuthorCache(Properties properties) {
@@ -1079,14 +1162,6 @@ public class IoTDBDescriptor {
       conf.setWalBufferSize(walBufferSize);
     }
 
-    int walBufferEntrySize =
-        Integer.parseInt(
-            properties.getProperty(
-                "wal_buffer_entry_size_in_byte", Integer.toString(conf.getWalBufferEntrySize())));
-    if (walBufferEntrySize > 0) {
-      conf.setWalBufferEntrySize(walBufferEntrySize);
-    }
-
     int walBufferQueueCapacity =
         Integer.parseInt(
             properties.getProperty(
@@ -1099,12 +1174,22 @@ public class IoTDBDescriptor {
   }
 
   private void loadWALHotModifiedProps(Properties properties) {
-    long fsyncWalDelayInMs =
+    long walAsyncModeFsyncDelayInMs =
         Long.parseLong(
             properties.getProperty(
-                "fsync_wal_delay_in_ms", Long.toString(conf.getFsyncWalDelayInMs())));
-    if (fsyncWalDelayInMs > 0) {
-      conf.setFsyncWalDelayInMs(fsyncWalDelayInMs);
+                "wal_async_mode_fsync_delay_in_ms",
+                Long.toString(conf.getWalAsyncModeFsyncDelayInMs())));
+    if (walAsyncModeFsyncDelayInMs > 0) {
+      conf.setWalAsyncModeFsyncDelayInMs(walAsyncModeFsyncDelayInMs);
+    }
+
+    long walSyncModeFsyncDelayInMs =
+        Long.parseLong(
+            properties.getProperty(
+                "wal_sync_mode_fsync_delay_in_ms",
+                Long.toString(conf.getWalSyncModeFsyncDelayInMs())));
+    if (walSyncModeFsyncDelayInMs > 0) {
+      conf.setWalSyncModeFsyncDelayInMs(walSyncModeFsyncDelayInMs);
     }
 
     long walFileSizeThreshold =
@@ -1425,22 +1510,32 @@ public class IoTDBDescriptor {
     }
   }
 
+  private String[][] parseDataDirs(String dataDirs) {
+    String[] tiers = dataDirs.split(IoTDBConstant.TIER_SEPARATOR);
+    String[][] tierDataDirs = new String[tiers.length][];
+    for (int i = 0; i < tiers.length; ++i) {
+      tierDataDirs[i] = tiers[i].split(",");
+    }
+    return tierDataDirs;
+  }
+
   public void loadHotModifiedProps(Properties properties) throws QueryProcessException {
     try {
       // update data dirs
       String dataDirs = properties.getProperty("dn_data_dirs", null);
       if (dataDirs != null) {
-        conf.reloadDataDirs(dataDirs.split(","));
+        conf.reloadDataDirs(parseDataDirs(dataDirs));
       }
 
-      // update dir strategy, must update after data dirs
+      // update dir strategy
       String multiDirStrategyClassName = properties.getProperty("dn_multi_dir_strategy", null);
       if (multiDirStrategyClassName != null
           && !multiDirStrategyClassName.equals(conf.getMultiDirStrategyClassName())) {
         conf.setMultiDirStrategyClassName(multiDirStrategyClassName);
         conf.confirmMultiDirStrategy();
-        DirectoryManager.getInstance().updateDirectoryStrategy();
       }
+
+      TierManager.getInstance().resetFolders();
 
       // update timed flush & close conf
       loadTimedService(properties);
@@ -1516,6 +1611,20 @@ public class IoTDBDescriptor {
       if (prevDeleteWalFilesPeriodInMs != conf.getDeleteWalFilesPeriodInMs()) {
         WALManager.getInstance().rebootWALDeleteThread();
       }
+
+      // update schema quota configuration
+      conf.setClusterSchemaLimitLevel(
+          properties
+              .getProperty("cluster_schema_limit_level", conf.getClusterSchemaLimitLevel())
+              .trim());
+      conf.setClusterSchemaLimitThreshold(
+          Long.parseLong(
+              properties
+                  .getProperty(
+                      "cluster_schema_limit_threshold",
+                      Long.toString(conf.getClusterSchemaLimitThreshold()))
+                  .trim()));
+      DataNodeSchemaQuotaManager.getInstance().updateConfiguration();
     } catch (Exception e) {
       throw new QueryProcessException(String.format("Fail to reload configuration because %s", e));
     }
@@ -1658,51 +1767,19 @@ public class IoTDBDescriptor {
   }
 
   private void initStorageEngineAllocate(Properties properties) {
-    String allocationRatio = properties.getProperty("storage_engine_memory_proportion", "8:2");
-    String[] proportions = allocationRatio.split(":");
-    int proportionForWrite = Integer.parseInt(proportions[0].trim());
-    int proportionForCompaction = Integer.parseInt(proportions[1].trim());
-
-    double writeProportion =
-        ((double) (proportionForWrite) / (double) (proportionForCompaction + proportionForWrite));
-
-    String allocationRatioForWrite = properties.getProperty("write_memory_proportion", "19:1");
-    proportions = allocationRatioForWrite.split(":");
-    int proportionForMemTable = Integer.parseInt(proportions[0].trim());
-    int proportionForTimePartitionInfo = Integer.parseInt(proportions[1].trim());
-
-    double memtableProportionForWrite =
-        ((double) (proportionForMemTable)
-            / (double) (proportionForMemTable + proportionForTimePartitionInfo));
-
-    double timePartitionInfoForWrite =
-        ((double) (proportionForTimePartitionInfo)
-            / (double) (proportionForMemTable + proportionForTimePartitionInfo));
-    conf.setWriteProportionForMemtable(writeProportion * memtableProportionForWrite);
-
-    conf.setAllocateMemoryForTimePartitionInfo(
-        (long)
-            ((writeProportion * timePartitionInfoForWrite)
-                * conf.getAllocateMemoryForStorageEngine()));
-
-    conf.setCompactionProportion(
-        ((double) (proportionForCompaction)
-            / (double) (proportionForCompaction + proportionForWrite)));
-  }
-
-  private void initSchemaMemoryAllocate(Properties properties) {
-    long schemaMemoryTotal = conf.getAllocateMemoryForSchema();
+    long storageMemoryTotal = conf.getAllocateMemoryForStorageEngine();
 
     int proportionSum = 10;
-    int schemaRegionProportion = 5;
-    int schemaCacheProportion = 3;
-    int partitionCacheProportion = 1;
-    int lastCacheProportion = 1;
+    int writeProportion = 8;
+    int compactionProportion = 2;
+    int writeProportionSum = 20;
+    int memTableProportion = 19;
+    int timePartitionInfo = 1;
 
-    String schemaMemoryAllocatePortion =
-        properties.getProperty("schema_memory_allocate_proportion");
-    if (schemaMemoryAllocatePortion != null) {
-      String[] proportions = schemaMemoryAllocatePortion.split(":");
+    String storageMemoryAllocatePortion =
+        properties.getProperty("storage_engine_memory_proportion");
+    if (storageMemoryAllocatePortion != null) {
+      String[] proportions = storageMemoryAllocatePortion.split(":");
       int loadedProportionSum = 0;
       for (String proportion : proportions) {
         loadedProportionSum += Integer.parseInt(proportion.trim());
@@ -1710,26 +1787,97 @@ public class IoTDBDescriptor {
 
       if (loadedProportionSum != 0) {
         proportionSum = loadedProportionSum;
-        schemaRegionProportion = Integer.parseInt(proportions[0].trim());
-        schemaCacheProportion = Integer.parseInt(proportions[1].trim());
-        partitionCacheProportion = Integer.parseInt(proportions[2].trim());
-        lastCacheProportion = Integer.parseInt(proportions[3].trim());
+        writeProportion = Integer.parseInt(proportions[0].trim());
+        compactionProportion = Integer.parseInt(proportions[1].trim());
+      }
+      conf.setCompactionProportion((double) compactionProportion / (double) proportionSum);
+    }
+
+    String allocationRatioForWrite = properties.getProperty("write_memory_proportion");
+    if (allocationRatioForWrite != null) {
+      String[] proportions = allocationRatioForWrite.split(":");
+      int loadedProportionSum = 0;
+      for (String proportion : proportions) {
+        loadedProportionSum += Integer.parseInt(proportion.trim());
+      }
+
+      if (loadedProportionSum != 0) {
+        writeProportionSum = loadedProportionSum;
+        memTableProportion = Integer.parseInt(proportions[0].trim());
+        timePartitionInfo = Integer.parseInt(proportions[1].trim());
+      }
+      // memtableProportionForWrite = 19/20 default
+      double memtableProportionForWrite =
+          ((double) memTableProportion / (double) writeProportionSum);
+
+      // timePartitionInfoForWrite = 1/20 default
+      double timePartitionInfoForWrite = ((double) timePartitionInfo / (double) writeProportionSum);
+      // proportionForWrite = 8/10 default
+      double proportionForWrite = ((double) (writeProportion) / (double) proportionSum);
+      // writeProportionForMemtable = 8/10 * 19/20 = 0.76 default
+      conf.setWriteProportionForMemtable(proportionForWrite * memtableProportionForWrite);
+      // allocateMemoryForTimePartitionInfo = storageMemoryTotal * 8/10 * 1/20 default
+      conf.setAllocateMemoryForTimePartitionInfo(
+          (long) ((proportionForWrite * timePartitionInfoForWrite) * storageMemoryTotal));
+    }
+  }
+
+  private void initSchemaMemoryAllocate(Properties properties) {
+    long schemaMemoryTotal = conf.getAllocateMemoryForSchema();
+
+    String schemaMemoryPortionInput = properties.getProperty("schema_memory_proportion");
+    if (schemaMemoryPortionInput != null) {
+      String[] proportions = schemaMemoryPortionInput.split(":");
+      int loadedProportionSum = 0;
+      for (String proportion : proportions) {
+        loadedProportionSum += Integer.parseInt(proportion.trim());
+      }
+
+      if (loadedProportionSum != 0) {
+        conf.setSchemaMemoryProportion(
+            new int[] {
+              Integer.parseInt(proportions[0].trim()),
+              Integer.parseInt(proportions[1].trim()),
+              Integer.parseInt(proportions[2].trim())
+            });
+      }
+
+    } else {
+      schemaMemoryPortionInput = properties.getProperty("schema_memory_allocate_proportion");
+      if (schemaMemoryPortionInput != null) {
+        String[] proportions = schemaMemoryPortionInput.split(":");
+        int loadedProportionSum = 0;
+        for (String proportion : proportions) {
+          loadedProportionSum += Integer.parseInt(proportion.trim());
+        }
+
+        if (loadedProportionSum != 0) {
+          conf.setSchemaMemoryProportion(
+              new int[] {
+                Integer.parseInt(proportions[0].trim()),
+                Integer.parseInt(proportions[1].trim()) + Integer.parseInt(proportions[3].trim()),
+                Integer.parseInt(proportions[2].trim())
+              });
+        }
       }
     }
 
+    int proportionSum = 0;
+    for (int proportion : conf.getSchemaMemoryProportion()) {
+      proportionSum += proportion;
+    }
+
     conf.setAllocateMemoryForSchemaRegion(
-        schemaMemoryTotal * schemaRegionProportion / proportionSum);
+        schemaMemoryTotal * conf.getSchemaMemoryProportion()[0] / proportionSum);
     logger.info("allocateMemoryForSchemaRegion = {}", conf.getAllocateMemoryForSchemaRegion());
 
-    conf.setAllocateMemoryForSchemaCache(schemaMemoryTotal * schemaCacheProportion / proportionSum);
+    conf.setAllocateMemoryForSchemaCache(
+        schemaMemoryTotal * conf.getSchemaMemoryProportion()[1] / proportionSum);
     logger.info("allocateMemoryForSchemaCache = {}", conf.getAllocateMemoryForSchemaCache());
 
     conf.setAllocateMemoryForPartitionCache(
-        schemaMemoryTotal * partitionCacheProportion / proportionSum);
+        schemaMemoryTotal * conf.getSchemaMemoryProportion()[2] / proportionSum);
     logger.info("allocateMemoryForPartitionCache = {}", conf.getAllocateMemoryForPartitionCache());
-
-    conf.setAllocateMemoryForLastCache(schemaMemoryTotal * lastCacheProportion / proportionSum);
-    logger.info("allocateMemoryForLastCache = {}", conf.getAllocateMemoryForLastCache());
   }
 
   @SuppressWarnings("squid:S3518") // "proportionSum" can't be zero
@@ -1823,16 +1971,10 @@ public class IoTDBDescriptor {
   }
 
   private void loadPipeProps(Properties properties) {
-    conf.setPipeDir(properties.getProperty("pipe_lib_dir", conf.getPipeDir()));
+    conf.setPipeLibDir(properties.getProperty("pipe_lib_dir", conf.getPipeLibDir()));
 
-    conf.setPipeSubtaskExecutorMaxThreadNum(
-        Integer.parseInt(
-            properties.getProperty(
-                "pipe_max_thread_num",
-                Integer.toString(conf.getPipeSubtaskExecutorMaxThreadNum()))));
-    if (conf.getPipeSubtaskExecutorMaxThreadNum() <= 0) {
-      conf.setPipeSubtaskExecutorMaxThreadNum(5);
-    }
+    conf.setPipeReceiverFileDir(
+        properties.getProperty("pipe_receiver_file_dir", conf.getPipeReceiverFileDir()));
   }
 
   private void loadCQProps(Properties properties) {
@@ -1971,12 +2113,15 @@ public class IoTDBDescriptor {
 
     conf.setDataRatisConsensusLogUnsafeFlushEnable(ratisConfig.isDataLogUnsafeFlushEnable());
     conf.setSchemaRatisConsensusLogUnsafeFlushEnable(ratisConfig.isSchemaLogUnsafeFlushEnable());
+    conf.setDataRatisConsensusLogForceSyncNum(ratisConfig.getDataRegionLogForceSyncNum());
 
     conf.setDataRatisConsensusLogSegmentSizeMax(ratisConfig.getDataLogSegmentSizeMax());
     conf.setSchemaRatisConsensusLogSegmentSizeMax(ratisConfig.getSchemaLogSegmentSizeMax());
 
     conf.setDataRatisConsensusGrpcFlowControlWindow(ratisConfig.getDataGrpcFlowControlWindow());
     conf.setSchemaRatisConsensusGrpcFlowControlWindow(ratisConfig.getSchemaGrpcFlowControlWindow());
+    conf.setDataRatisConsensusGrpcLeaderOutstandingAppendsMax(
+        ratisConfig.getDataRegionGrpcLeaderOutstandingAppendsMax());
 
     conf.setDataRatisConsensusLeaderElectionTimeoutMinMs(
         ratisConfig.getDataLeaderElectionTimeoutMin());

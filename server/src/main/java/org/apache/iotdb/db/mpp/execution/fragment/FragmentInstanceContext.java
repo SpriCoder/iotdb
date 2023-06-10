@@ -41,6 +41,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -62,6 +63,8 @@ public class FragmentInstanceContext extends QueryContext {
   private Set<TsFileResource> closedFilePaths;
   /** unClosed tsfile used in this fragment instance */
   private Set<TsFileResource> unClosedFilePaths;
+  /** check if there is tmp file to be deleted */
+  private boolean mayHaveTmpFile = false;
 
   private final long createNanos = System.nanoTime();
 
@@ -71,6 +74,8 @@ public class FragmentInstanceContext extends QueryContext {
   private final AtomicReference<Long> executionStartTime = new AtomicReference<>();
   private final AtomicReference<Long> lastExecutionStartTime = new AtomicReference<>();
   private final AtomicReference<Long> executionEndTime = new AtomicReference<>();
+
+  private CountDownLatch allDriversClosed;
 
   // session info
   private SessionInfo sessionInfo;
@@ -350,6 +355,28 @@ public class FragmentInstanceContext extends QueryContext {
     }
   }
 
+  public void initializeNumOfDrivers(int numOfDrivers) {
+    // initialize with the num of Drivers
+    allDriversClosed = new CountDownLatch(numOfDrivers);
+  }
+
+  public void decrementNumOfUnClosedDriver() {
+    allDriversClosed.countDown();
+  }
+
+  public void releaseResourceWhenAllDriversAreClosed() {
+    while (true) {
+      try {
+        allDriversClosed.await();
+        break;
+      } catch (InterruptedException e) {
+        LOGGER.warn(
+            "Interrupted when await on allDriversClosed, FragmentInstance Id is {}", this.getId());
+      }
+    }
+    releaseResource();
+  }
+
   /**
    * All file paths used by this fragment instance must be cleared and thus the usage reference must
    * be decreased.
@@ -374,5 +401,13 @@ public class FragmentInstanceContext extends QueryContext {
     timeFilter = null;
     sourcePaths = null;
     sharedQueryDataSource = null;
+  }
+
+  public void setMayHaveTmpFile(boolean mayHaveTmpFile) {
+    this.mayHaveTmpFile = mayHaveTmpFile;
+  }
+
+  public boolean mayHaveTmpFile() {
+    return mayHaveTmpFile;
   }
 }

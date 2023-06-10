@@ -18,6 +18,7 @@
  */
 package org.apache.iotdb.db.mpp.execution.schedule;
 
+import org.apache.iotdb.commons.concurrent.ThreadName;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.StartupException;
 import org.apache.iotdb.commons.service.IService;
@@ -41,7 +42,7 @@ import org.apache.iotdb.db.mpp.execution.schedule.queue.multilevelqueue.DriverTa
 import org.apache.iotdb.db.mpp.execution.schedule.queue.multilevelqueue.MultilevelPriorityQueue;
 import org.apache.iotdb.db.mpp.execution.schedule.task.DriverTask;
 import org.apache.iotdb.db.mpp.execution.schedule.task.DriverTaskStatus;
-import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.mpp.metric.DriverSchedulerMetricSet;
 import org.apache.iotdb.db.quotas.DataNodeThrottleQuotaManager;
 import org.apache.iotdb.db.utils.SetThreadName;
 import org.apache.iotdb.mpp.rpc.thrift.TFragmentInstanceId;
@@ -71,7 +72,8 @@ import static org.apache.iotdb.db.mpp.metric.DriverSchedulerMetricSet.READY_QUEU
 public class DriverScheduler implements IDriverScheduler, IService {
 
   private static final Logger logger = LoggerFactory.getLogger(DriverScheduler.class);
-  private static final QueryMetricsManager QUERY_METRICS = QueryMetricsManager.getInstance();
+  private static final DriverSchedulerMetricSet DRIVER_SCHEDULER_METRIC_SET =
+      DriverSchedulerMetricSet.getInstance();
   private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
 
   private static final double LEVEL_TIME_MULTIPLIER = 2;
@@ -114,7 +116,7 @@ public class DriverScheduler implements IDriverScheduler, IService {
   public void start() throws StartupException {
     for (int i = 0; i < WORKER_THREAD_NUM; i++) {
       int index = i;
-      String threadName = "Query-Worker-Thread-" + i;
+      String threadName = ThreadName.QUERY_WORKER.getName() + "-" + i;
       ThreadProducer producer =
           new ThreadProducer() {
             @Override
@@ -135,7 +137,7 @@ public class DriverScheduler implements IDriverScheduler, IService {
       t.start();
     }
 
-    String threadName = "Query-Sentinel-Thread";
+    String threadName = ThreadName.QUERY_SENTINEL.getName();
     ThreadProducer producer =
         new ThreadProducer() {
           @Override
@@ -299,13 +301,8 @@ public class DriverScheduler implements IDriverScheduler, IService {
       for (Set<DriverTask> fragmentRelatedTasks : queryRelatedTasks.values()) {
         if (fragmentRelatedTasks != null) {
           for (DriverTask task : fragmentRelatedTasks) {
-            task.lock();
-            try {
-              task.setAbortCause(DriverTaskAbortedException.BY_QUERY_CASCADING_ABORTED);
-              clearDriverTask(task);
-            } finally {
-              task.unlock();
-            }
+            task.setAbortCause(DriverTaskAbortedException.BY_QUERY_CASCADING_ABORTED);
+            clearDriverTask(task);
           }
         }
       }
@@ -324,13 +321,8 @@ public class DriverScheduler implements IDriverScheduler, IService {
             if (task == null) {
               return;
             }
-            task.lock();
-            try {
-              task.setAbortCause(DriverTaskAbortedException.BY_FRAGMENT_ABORT_CALLED);
-              clearDriverTask(task);
-            } finally {
-              task.unlock();
-            }
+            task.setAbortCause(DriverTaskAbortedException.BY_FRAGMENT_ABORT_CALLED);
+            clearDriverTask(task);
           }
         }
       }
@@ -340,26 +332,31 @@ public class DriverScheduler implements IDriverScheduler, IService {
   private void clearDriverTask(DriverTask task) {
     try (SetThreadName driverTaskName =
         new SetThreadName(task.getDriver().getDriverTaskId().getFullId())) {
-      DriverTaskStatus status = task.getStatus();
-      switch (status) {
-          // If it has been aborted, return directly
-        case ABORTED:
-          return;
-        case READY:
-          task.setStatus(DriverTaskStatus.ABORTED);
-          readyQueue.remove(task.getDriverTaskId());
-          break;
-        case BLOCKED:
-          task.setStatus(DriverTaskStatus.ABORTED);
-          blockedTasks.remove(task);
-          readyQueue.decreaseReservedSize();
-          break;
-        case RUNNING:
-          task.setStatus(DriverTaskStatus.ABORTED);
-          readyQueue.decreaseReservedSize();
-          break;
-        case FINISHED:
-          break;
+      try {
+        task.lock();
+        DriverTaskStatus status = task.getStatus();
+        switch (status) {
+            // If it has been aborted, return directly
+          case ABORTED:
+            return;
+          case READY:
+            task.setStatus(DriverTaskStatus.ABORTED);
+            readyQueue.remove(task.getDriverTaskId());
+            break;
+          case BLOCKED:
+            task.setStatus(DriverTaskStatus.ABORTED);
+            blockedTasks.remove(task);
+            readyQueue.decreaseReservedSize();
+            break;
+          case RUNNING:
+            task.setStatus(DriverTaskStatus.ABORTED);
+            readyQueue.decreaseReservedSize();
+            break;
+          case FINISHED:
+            break;
+        }
+      } finally {
+        task.unlock();
       }
 
       timeoutQueue.remove(task.getDriverTaskId());
@@ -378,26 +375,31 @@ public class DriverScheduler implements IDriverScheduler, IService {
           queryMap.remove(task.getDriverTaskId().getQueryId());
         }
       }
-      if (task.getAbortCause() != null) {
-        try {
-          task.getDriver()
-              .failed(
-                  new DriverTaskAbortedException(
-                      task.getDriver().getDriverTaskId().getFullId(), task.getAbortCause()));
-        } catch (Exception e) {
-          logger.error("Clear DriverTask failed", e);
+      try {
+        task.lock();
+        if (task.getAbortCause() != null) {
+          try {
+            task.getDriver()
+                .failed(
+                    new DriverTaskAbortedException(
+                        task.getDriver().getDriverTaskId().getFullId(), task.getAbortCause()));
+          } catch (Exception e) {
+            logger.error("Clear DriverTask failed", e);
+          }
         }
-      }
-      if (task.getStatus() == DriverTaskStatus.ABORTED) {
-        try {
-          blockManager.forceDeregisterFragmentInstance(
-              new TFragmentInstanceId(
-                  task.getDriverTaskId().getQueryId().getId(),
-                  task.getDriverTaskId().getFragmentId().getId(),
-                  task.getDriverTaskId().getFragmentInstanceId().getInstanceId()));
-        } catch (Exception e) {
-          logger.error("Clear DriverTask failed", e);
+        if (task.getStatus() == DriverTaskStatus.ABORTED) {
+          try {
+            blockManager.forceDeregisterFragmentInstance(
+                new TFragmentInstanceId(
+                    task.getDriverTaskId().getQueryId().getId(),
+                    task.getDriverTaskId().getFragmentId().getId(),
+                    task.getDriverTaskId().getFragmentInstanceId().getInstanceId()));
+          } catch (Exception e) {
+            logger.error("Clear DriverTask failed", e);
+          }
         }
+      } finally {
+        task.unlock();
       }
     }
   }
@@ -416,6 +418,14 @@ public class DriverScheduler implements IDriverScheduler, IService {
 
   public long getBlockQueueTaskCount() {
     return blockedTasks.size();
+  }
+
+  public long getTimeoutQueueTaskCount() {
+    return timeoutQueue.size();
+  }
+
+  public int getQueryMapSize() {
+    return queryMap.size();
   }
 
   @TestOnly
@@ -461,7 +471,7 @@ public class DriverScheduler implements IDriverScheduler, IService {
         }
 
         task.setStatus(DriverTaskStatus.READY);
-        QUERY_METRICS.recordTaskQueueTime(
+        DRIVER_SCHEDULER_METRIC_SET.recordTaskQueueTime(
             BLOCK_QUEUED_TIME, System.nanoTime() - task.getLastEnterBlockQueueTime());
         task.setLastEnterReadyQueueTime(System.nanoTime());
         task.resetLevelScheduledTime();
@@ -481,7 +491,7 @@ public class DriverScheduler implements IDriverScheduler, IService {
         }
 
         task.setStatus(DriverTaskStatus.RUNNING);
-        QUERY_METRICS.recordTaskQueueTime(
+        DRIVER_SCHEDULER_METRIC_SET.recordTaskQueueTime(
             READY_QUEUED_TIME, System.nanoTime() - task.getLastEnterReadyQueueTime());
       } finally {
         task.unlock();
@@ -534,12 +544,11 @@ public class DriverScheduler implements IDriverScheduler, IService {
       } finally {
         task.unlock();
       }
-      task.lock();
-      try {
-        clearDriverTask(task);
-      } finally {
-        task.unlock();
-      }
+      // Wrapping clearDriverTask with task.lock() may lead to deadlock. For example:
+      // Thread A locks a task and then try to remove it from a SynchronizedSet(instance related
+      // tasks) which will try to get the lock of SynchronizedSet.
+      // Thread B locks the SynchronizedSet first and then tries to lock the task.
+      clearDriverTask(task);
     }
 
     @Override
@@ -556,10 +565,10 @@ public class DriverScheduler implements IDriverScheduler, IService {
           logger.warn(
               "The task {} is aborted. All other tasks in the same query will be cancelled",
               task.getDriverTaskId());
-          clearDriverTask(task);
         } finally {
           task.unlock();
         }
+        clearDriverTask(task);
         QueryId queryId = task.getDriverTaskId().getQueryId();
         Map<FragmentInstanceId, Set<DriverTask>> queryRelatedTasks = queryMap.remove(queryId);
         if (queryRelatedTasks != null) {
@@ -570,13 +579,8 @@ public class DriverScheduler implements IDriverScheduler, IService {
                   if (task.equals(otherTask)) {
                     continue;
                   }
-                  otherTask.lock();
-                  try {
-                    otherTask.setAbortCause(DriverTaskAbortedException.BY_QUERY_CASCADING_ABORTED);
-                    clearDriverTask(otherTask);
-                  } finally {
-                    otherTask.unlock();
-                  }
+                  otherTask.setAbortCause(DriverTaskAbortedException.BY_QUERY_CASCADING_ABORTED);
+                  clearDriverTask(otherTask);
                 }
               }
             }

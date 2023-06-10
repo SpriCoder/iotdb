@@ -19,6 +19,7 @@
 
 package org.apache.iotdb.db.mpp.plan.analyze.schema;
 
+import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.exception.IoTDBException;
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.path.PartialPath;
@@ -38,7 +39,6 @@ import org.apache.iotdb.tsfile.utils.Binary;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -92,7 +92,7 @@ class ClusterSchemaFetchExecutor {
    * @param rawPatternTree the pattern tree consisting of the fullPathList
    * @return fetched schema
    */
-  ClusterSchemaTree fetchSchemaOfPreciseMatch(
+  ClusterSchemaTree fetchSchemaOfPreciseMatchOrPreciseDeviceUsingTemplate(
       List<PartialPath> fullPathList, PathPatternTree rawPatternTree) {
     ClusterSchemaTree schemaTree =
         executeSchemaFetchQuery(
@@ -131,6 +131,24 @@ class ClusterSchemaFetchExecutor {
     return fetchSchemaAndCacheResult(patternTree);
   }
 
+  ClusterSchemaTree fetchSchemaWithFullPaths(List<String> fullPathList) {
+    PathPatternTree patternTree = new PathPatternTree();
+    for (String fullPath : fullPathList) {
+      try {
+        patternTree.appendFullPath(new PartialPath(fullPath));
+      } catch (IllegalPathException e) {
+        throw new RuntimeException(e);
+      }
+    }
+    patternTree.constructTree();
+    return fetchSchemaAndCacheResult(patternTree);
+  }
+
+  ClusterSchemaTree fetchSchemaWithPatternTreeAndCache(PathPatternTree patternTree) {
+    patternTree.constructTree();
+    return fetchSchemaAndCacheResult(patternTree);
+  }
+
   private ClusterSchemaTree fetchSchemaAndCacheResult(PathPatternTree patternTree) {
     ClusterSchemaTree schemaTree =
         executeSchemaFetchQuery(
@@ -152,6 +170,7 @@ class ClusterSchemaFetchExecutor {
 
   private ClusterSchemaTree executeSchemaFetchQuery(SchemaFetchStatement schemaFetchStatement) {
     long queryId = queryIdProvider.get();
+    Throwable t = null;
     try {
       ExecutionResult executionResult = statementExecutor.apply(queryId, schemaFetchStatement);
       if (executionResult.status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
@@ -170,6 +189,7 @@ class ClusterSchemaFetchExecutor {
           try {
             tsBlock = coordinator.getQueryExecution(queryId).getBatchResult();
           } catch (IoTDBException e) {
+            t = e;
             throw new RuntimeException("Fetch Schema failed. ", e);
           }
           if (!tsBlock.isPresent() || tsBlock.get().isEmpty()) {
@@ -183,8 +203,11 @@ class ClusterSchemaFetchExecutor {
         result.setDatabases(databaseSet);
         return result;
       }
+    } catch (Throwable throwable) {
+      t = throwable;
+      throw throwable;
     } finally {
-      coordinator.cleanupQueryExecution(queryId);
+      coordinator.cleanupQueryExecution(queryId, t);
     }
   }
 
@@ -204,8 +227,8 @@ class ClusterSchemaFetchExecutor {
         throw new RuntimeException(
             new MetadataException("Failed to fetch schema because of unrecognized data"));
       }
-    } catch (IOException e) {
-      // Totally memory operation. This case won't happen.
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
   }
 }

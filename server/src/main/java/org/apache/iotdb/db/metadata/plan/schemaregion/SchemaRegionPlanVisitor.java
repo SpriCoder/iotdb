@@ -24,6 +24,7 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IAutoCreateDeviceMNo
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeAliasPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeTagOffsetPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateAlignedTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateLogicalViewPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeleteTimeSeriesPlan;
@@ -31,6 +32,9 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeactivateTempla
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeleteTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeleteTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IPreDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IRollbackPreDeleteLogicalViewPlan;
 
 public abstract class SchemaRegionPlanVisitor<R, C> {
 
@@ -88,5 +92,23 @@ public abstract class SchemaRegionPlanVisitor<R, C> {
 
   public R visitDeactivateTemplate(IDeactivateTemplatePlan deactivateTemplatePlan, C context) {
     return visitSchemaRegionPlan(deactivateTemplatePlan, context);
+  }
+
+  public R visitCreateLogicalView(ICreateLogicalViewPlan createLogicalViewPlan, C context) {
+    return visitSchemaRegionPlan(createLogicalViewPlan, context);
+  }
+
+  public R visitPreDeleteLogicalView(
+      IPreDeleteLogicalViewPlan preDeleteLogicalViewPlan, C context) {
+    return visitSchemaRegionPlan(preDeleteLogicalViewPlan, context);
+  }
+
+  public R visitRollbackPreDeleteLogicalView(
+      IRollbackPreDeleteLogicalViewPlan rollbackPreDeleteLogicalViewPlan, C context) {
+    return visitSchemaRegionPlan(rollbackPreDeleteLogicalViewPlan, context);
+  }
+
+  public R visitDeleteLogicalView(IDeleteLogicalViewPlan deleteLogicalViewPlan, C context) {
+    return visitSchemaRegionPlan(deleteLogicalViewPlan, context);
   }
 }

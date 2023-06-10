@@ -44,6 +44,7 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.MergeSortNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.MultiChildProcessNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.SingleDeviceViewNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.SlidingWindowAggregationNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.SortNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.TimeJoinNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.last.LastQueryCollectNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.last.LastQueryMergeNode;
@@ -60,10 +61,7 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.source.SourceNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.AggregationDescriptor;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.AggregationStep;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.CrossSeriesAggregationDescriptor;
-import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.OrderByParameter;
 import org.apache.iotdb.db.mpp.plan.statement.component.Ordering;
-import org.apache.iotdb.db.mpp.plan.statement.component.SortItem;
-import org.apache.iotdb.db.mpp.plan.statement.component.SortKey;
 import org.apache.iotdb.db.mpp.plan.statement.crud.QueryStatement;
 
 import java.util.ArrayList;
@@ -195,6 +193,10 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
       return deviceViewNodeList;
     }
 
+    if (analysis.isHasSort()) {
+      return deviceViewNodeList;
+    }
+
     MergeSortNode mergeSortNode =
         new MergeSortNode(
             context.queryContext.getQueryId().genPlanNodeId(),
@@ -262,6 +264,36 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
       }
       return newRoot;
     }
+  }
+
+  @Override
+  public List<PlanNode> visitSort(SortNode node, DistributionPlanContext context) {
+
+    analysis.setHasSort(true);
+
+    List<PlanNode> children = rewrite(node.getChild(), context);
+    if (children.size() == 1) {
+      node.setChild(children.get(0));
+      return Collections.singletonList(node);
+    }
+
+    MergeSortNode mergeSortNode =
+        new MergeSortNode(
+            context.queryContext.getQueryId().genPlanNodeId(),
+            node.getOrderByParameter(),
+            node.getOutputColumnNames());
+
+    for (PlanNode child : children) {
+      SortNode sortNode = cloneSortNodeWithOutChild(node, context);
+      sortNode.setChild(child);
+      mergeSortNode.addChild(sortNode);
+    }
+    return Collections.singletonList(mergeSortNode);
+  }
+
+  private SortNode cloneSortNodeWithOutChild(SortNode node, DistributionPlanContext context) {
+    return new SortNode(
+        context.queryContext.getQueryId().genPlanNodeId(), node.getOrderByParameter());
   }
 
   @Override
@@ -385,9 +417,7 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
       LastQueryScanNode node, DistributionPlanContext context) {
     LastQueryNode mergeNode =
         new LastQueryNode(
-            context.queryContext.getQueryId().genPlanNodeId(),
-            node.getPartitionTimeFilter(),
-            new OrderByParameter());
+            context.queryContext.getQueryId().genPlanNodeId(), node.getPartitionTimeFilter(), null);
     return processRawSeriesScan(node, context, mergeNode);
   }
 
@@ -396,9 +426,7 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
       AlignedLastQueryScanNode node, DistributionPlanContext context) {
     LastQueryNode mergeNode =
         new LastQueryNode(
-            context.queryContext.getQueryId().genPlanNodeId(),
-            node.getPartitionTimeFilter(),
-            new OrderByParameter());
+            context.queryContext.getQueryId().genPlanNodeId(), node.getPartitionTimeFilter(), null);
     return processRawSeriesScan(node, context, mergeNode);
   }
 
@@ -533,11 +561,8 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
     if (context.queryMultiRegion) {
       PlanNode newRoot = genLastQueryRootNode(node, context);
       // add sort op for each if we add LastQueryMergeNode as root
-      if (newRoot instanceof LastQueryMergeNode && node.getMergeOrderParameter().isEmpty()) {
-        OrderByParameter orderByParameter =
-            new OrderByParameter(
-                Collections.singletonList(new SortItem(SortKey.TIMESERIES, Ordering.ASC)));
-        addSortForEachLastQueryNode(root, orderByParameter);
+      if (newRoot instanceof LastQueryMergeNode && !node.needOrderByTimeseries()) {
+        addSortForEachLastQueryNode(root, Ordering.ASC);
       }
       root.getChildren().forEach(newRoot::addChild);
       return Collections.singletonList(newRoot);
@@ -546,38 +571,51 @@ public class SourceRewriter extends SimplePlanNodeRewriter<DistributionPlanConte
     }
   }
 
-  private void addSortForEachLastQueryNode(PlanNode root, OrderByParameter orderByParameter) {
+  private void addSortForEachLastQueryNode(PlanNode root, Ordering timeseriesOrdering) {
     if (root instanceof LastQueryNode
         && (root.getChildren().get(0) instanceof LastQueryScanNode
             || root.getChildren().get(0) instanceof AlignedLastQueryScanNode)) {
       LastQueryNode lastQueryNode = (LastQueryNode) root;
-      lastQueryNode.setMergeOrderParameter(orderByParameter);
+      lastQueryNode.setTimeseriesOrdering(timeseriesOrdering);
       // sort children node
       lastQueryNode.setChildren(
           lastQueryNode.getChildren().stream()
               .sorted(
                   Comparator.comparing(
                       child -> {
-                        String fullPath = "";
+                        String sortKey = "";
                         if (child instanceof LastQueryScanNode) {
-                          fullPath = ((LastQueryScanNode) child).getSeriesPath().getFullPath();
+                          sortKey = ((LastQueryScanNode) child).getOutputSymbolForSort();
                         } else if (child instanceof AlignedLastQueryScanNode) {
-                          fullPath = ((AlignedLastQueryScanNode) child).getSeriesPath().getDevice();
+                          sortKey = ((AlignedLastQueryScanNode) child).getOutputSymbolForSort();
                         }
-                        return fullPath;
+                        return sortKey;
                       }))
               .collect(Collectors.toList()));
+      lastQueryNode
+          .getChildren()
+          .forEach(
+              child -> {
+                if (child instanceof AlignedLastQueryScanNode) {
+                  // sort the measurements of AlignedPath for LastQueryMergeOperator
+                  ((AlignedLastQueryScanNode) child)
+                      .getSeriesPath()
+                      .sortMeasurement(Comparator.naturalOrder());
+                }
+              });
     } else {
       for (PlanNode child : root.getChildren()) {
-        addSortForEachLastQueryNode(child, orderByParameter);
+        addSortForEachLastQueryNode(child, timeseriesOrdering);
       }
     }
   }
 
   private PlanNode genLastQueryRootNode(LastQueryNode node, DistributionPlanContext context) {
     PlanNodeId id = context.queryContext.getQueryId().genPlanNodeId();
-    if (context.oneSeriesInMultiRegion || !node.getMergeOrderParameter().isEmpty()) {
-      return new LastQueryMergeNode(id, node.getMergeOrderParameter());
+    // if the series is from multi regions or order by clause only refer to timeseries, use
+    // LastQueryMergeNode
+    if (context.oneSeriesInMultiRegion || node.needOrderByTimeseries()) {
+      return new LastQueryMergeNode(id, node.getTimeseriesOrdering());
     }
     return new LastQueryCollectNode(id);
   }

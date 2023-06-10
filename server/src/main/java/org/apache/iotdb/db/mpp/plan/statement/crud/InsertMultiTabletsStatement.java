@@ -19,17 +19,21 @@
 
 package org.apache.iotdb.db.mpp.plan.statement.crud;
 
-import org.apache.iotdb.common.rpc.thrift.TEndPoint;
-import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
-import org.apache.iotdb.commons.partition.DataPartition;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.exception.metadata.DuplicateInsertException;
+import org.apache.iotdb.db.mpp.plan.analyze.schema.ISchemaValidation;
 import org.apache.iotdb.db.mpp.plan.statement.StatementType;
 import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
-import org.apache.iotdb.db.utils.TimePartitionUtils;
+import org.apache.iotdb.tsfile.exception.NotImplementedException;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class InsertMultiTabletsStatement extends InsertBaseStatement {
 
@@ -101,16 +105,72 @@ public class InsertMultiTabletsStatement extends InsertBaseStatement {
   }
 
   @Override
-  public List<TEndPoint> collectRedirectInfo(DataPartition dataPartition) {
-    List<TEndPoint> result = new ArrayList<>();
-    for (InsertTabletStatement insertTabletStatement : insertTabletStatementList) {
-      TRegionReplicaSet regionReplicaSet =
-          dataPartition.getDataRegionReplicaSetForWriting(
-              insertTabletStatement.devicePath.getFullPath(),
-              TimePartitionUtils.getTimePartition(
-                  insertTabletStatement.getTimes()[insertTabletStatement.getTimes().length - 1]));
-      result.add(regionReplicaSet.getDataNodeLocations().get(0).getClientRpcEndPoint());
+  public ISchemaValidation getSchemaValidation() {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public List<ISchemaValidation> getSchemaValidationList() {
+    return insertTabletStatementList.stream()
+        .map(InsertTabletStatement::getSchemaValidation)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
+    return false;
+  }
+
+  @Override
+  public long getMinTime() {
+    throw new NotImplementedException();
+  }
+
+  @Override
+  public Object getFirstValueOfIndex(int index) {
+    throw new NotImplementedException();
+  }
+
+  @Override
+  public InsertBaseStatement removeLogicalView() {
+    List<InsertTabletStatement> mergedList = new ArrayList<>();
+    boolean needSplit = false;
+    for (InsertTabletStatement child : this.insertTabletStatementList) {
+      List<InsertTabletStatement> childSplitResult = child.getSplitList();
+      needSplit = needSplit || child.isNeedSplit();
+      mergedList.addAll(childSplitResult);
     }
-    return result;
+    if (!needSplit) {
+      return this;
+    }
+    validateInsertTabletList(mergedList);
+    InsertMultiTabletsStatement splitResult = new InsertMultiTabletsStatement();
+    splitResult.setInsertTabletStatementList(mergedList);
+    return splitResult;
+  }
+
+  /**
+   * Check given InsertRowStatement list, make sure no duplicate time series in those statements. If
+   * there are duplicate measurements, throw DuplicateInsertException.
+   */
+  public static void validateInsertTabletList(List<InsertTabletStatement> insertTabletList) {
+    if (insertTabletList == null) {
+      return;
+    }
+    Map<String, Set<String>> mapFromDeviceToMeasurements = new HashMap<>();
+    for (InsertTabletStatement insertTablet : insertTabletList) {
+      String device = insertTablet.devicePath.getFullPath();
+      Set<String> measurementSet = mapFromDeviceToMeasurements.get(device);
+      if (measurementSet == null) {
+        measurementSet = new HashSet<>();
+      }
+      for (String measurement : insertTablet.measurements) {
+        boolean notExist = measurementSet.add(measurement);
+        if (!notExist) {
+          throw new RuntimeException(new DuplicateInsertException(device, measurement));
+        }
+      }
+      mapFromDeviceToMeasurements.put(device, measurementSet);
+    }
   }
 }

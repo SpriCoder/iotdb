@@ -401,7 +401,7 @@ public class IntermediateLayerVisitor
     executor.beforeStart(
         context.queryId,
         context.memoryAssigner.assign(),
-        expressions.stream().map(Expression::toString).collect(Collectors.toList()),
+        expressions.stream().map(Expression::getExpressionString).collect(Collectors.toList()),
         expressions.stream().map(context::getType).collect(Collectors.toList()),
         functionExpression.getFunctionAttributes());
 
@@ -444,7 +444,7 @@ public class IntermediateLayerVisitor
   }
 
   public static class IntermediateLayerVisitorContext {
-    long queryId;
+    String queryId;
 
     UDTFContext udtfContext;
 
@@ -457,7 +457,7 @@ public class IntermediateLayerVisitor
     LayerMemoryAssigner memoryAssigner;
 
     public IntermediateLayerVisitorContext(
-        long queryId,
+        String queryId,
         UDTFContext udtfContext,
         QueryDataSetInputLayer rawTimeSeriesInputLayer,
         Map<Expression, IntermediateLayer> expressionIntermediateLayerMap,

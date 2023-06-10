@@ -19,13 +19,21 @@
 
 package org.apache.iotdb.db.pipe.agent.plugin;
 
+import org.apache.iotdb.commons.pipe.plugin.builtin.BuiltinPipePlugin;
 import org.apache.iotdb.commons.pipe.plugin.meta.DataNodePipePluginMetaKeeper;
 import org.apache.iotdb.commons.pipe.plugin.meta.PipePluginMeta;
 import org.apache.iotdb.commons.pipe.plugin.service.PipePluginClassLoader;
 import org.apache.iotdb.commons.pipe.plugin.service.PipePluginClassLoaderManager;
 import org.apache.iotdb.commons.pipe.plugin.service.PipePluginExecutableManager;
+import org.apache.iotdb.db.pipe.config.PipeCollectorConstant;
+import org.apache.iotdb.db.pipe.config.PipeConnectorConstant;
+import org.apache.iotdb.db.pipe.config.PipeProcessorConstant;
+import org.apache.iotdb.pipe.api.PipeCollector;
+import org.apache.iotdb.pipe.api.PipeConnector;
 import org.apache.iotdb.pipe.api.PipePlugin;
-import org.apache.iotdb.pipe.api.exception.PipeManagementException;
+import org.apache.iotdb.pipe.api.PipeProcessor;
+import org.apache.iotdb.pipe.api.customizer.PipeParameters;
+import org.apache.iotdb.pipe.api.exception.PipeException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +51,10 @@ public class PipePluginAgent {
 
   private final DataNodePipePluginMetaKeeper pipePluginMetaKeeper;
 
+  public PipePluginAgent() {
+    this.pipePluginMetaKeeper = new DataNodePipePluginMetaKeeper();
+  }
+
   /////////////////////////////// Lock ///////////////////////////////
 
   public void acquireLock() {
@@ -58,6 +70,10 @@ public class PipePluginAgent {
   public void register(PipePluginMeta pipePluginMeta, ByteBuffer jarFile) throws Exception {
     acquireLock();
     try {
+      // try to deregister first to avoid inconsistent state
+      deregister(pipePluginMeta.getPluginName(), false);
+
+      // register process from here
       checkIfRegistered(pipePluginMeta);
       saveJarFileIfNeeded(pipePluginMeta.getJarName(), jarFile);
       doRegister(pipePluginMeta);
@@ -66,11 +82,20 @@ public class PipePluginAgent {
     }
   }
 
-  private void checkIfRegistered(PipePluginMeta pipePluginMeta) throws PipeManagementException {
+  private void checkIfRegistered(PipePluginMeta pipePluginMeta) throws PipeException {
     final String pluginName = pipePluginMeta.getPluginName();
     final PipePluginMeta information = pipePluginMetaKeeper.getPipePluginMeta(pluginName);
     if (information == null) {
       return;
+    }
+
+    if (information.isBuiltin()) {
+      String errorMessage =
+          String.format(
+              "Failed to register PipePlugin %s, because the given PipePlugin name is the same as a built-in PipePlugin name.",
+              pluginName);
+      LOGGER.warn(errorMessage);
+      throw new PipeException(errorMessage);
     }
 
     if (PipePluginExecutableManager.getInstance()
@@ -82,8 +107,11 @@ public class PipePluginAgent {
                   + "because existed md5 of jar file for pipe plugin %s is different from the new jar file.",
               pluginName, pluginName);
       LOGGER.warn(errMsg);
-      throw new PipeManagementException(errMsg);
+      throw new PipeException(errMsg);
     }
+
+    // if the pipe plugin is already registered and the jar file is the same, do nothing
+    // we allow users to register the same pipe plugin multiple times without any error
   }
 
   private void saveJarFileIfNeeded(String jarName, ByteBuffer byteBuffer) throws IOException {
@@ -97,10 +125,9 @@ public class PipePluginAgent {
    * the PipePluginClassLoader and its instance will be created to ensure that it can be loaded.
    *
    * @param pipePluginMeta the meta information of the PipePlugin
-   * @throws PipeManagementException if the PipePlugin can not be loaded or its instance can not be
-   *     created
+   * @throws PipeException if the PipePlugin can not be loaded or its instance can not be created
    */
-  public void doRegister(PipePluginMeta pipePluginMeta) throws PipeManagementException {
+  public void doRegister(PipePluginMeta pipePluginMeta) throws PipeException {
     final String pluginName = pipePluginMeta.getPluginName();
     final String className = pipePluginMeta.getClassName();
 
@@ -111,7 +138,7 @@ public class PipePluginAgent {
 
       final Class<?> pluginClass = Class.forName(className, true, currentActiveClassLoader);
       // ensure that it is a PipePlugin class
-      PipePlugin ignored = (PipePlugin) pluginClass.getDeclaredConstructor().newInstance();
+      final PipePlugin ignored = (PipePlugin) pluginClass.getDeclaredConstructor().newInstance();
 
       pipePluginMetaKeeper.addPipePluginMeta(pluginName, pipePluginMeta);
       pipePluginMetaKeeper.addPluginAndClass(pluginName, pluginClass);
@@ -127,7 +154,7 @@ public class PipePluginAgent {
               "Failed to register PipePlugin %s(%s), because its instance can not be constructed successfully. Exception: %s",
               pluginName.toUpperCase(), className, e);
       LOGGER.warn(errorMessage, e);
-      throw new PipeManagementException(errorMessage);
+      throw new PipeException(errorMessage);
     }
   }
 
@@ -141,15 +168,21 @@ public class PipePluginAgent {
   public void deregister(String pluginName, boolean needToDeleteJar) throws Exception {
     acquireLock();
     try {
-      PipePluginMeta information = pipePluginMetaKeeper.getPipePluginMeta(pluginName);
-      if (information == null) {
-        return;
+      final PipePluginMeta information = pipePluginMetaKeeper.getPipePluginMeta(pluginName);
+
+      if (information != null && information.isBuiltin()) {
+        String errorMessage =
+            String.format("Failed to deregister builtin PipePlugin %s.", pluginName);
+        LOGGER.warn(errorMessage);
+        throw new PipeException(errorMessage);
       }
 
+      // remove anyway
       pipePluginMetaKeeper.removePipePluginMeta(pluginName);
       pipePluginMetaKeeper.removePluginClass(pluginName);
 
-      if (needToDeleteJar) {
+      // if it is needed to delete jar file of the pipe plugin, delete both jar file and md5
+      if (information != null && needToDeleteJar) {
         PipePluginExecutableManager.getInstance().removeFileUnderLibRoot(information.getJarName());
         PipePluginExecutableManager.getInstance()
             .removeFileUnderTemporaryRoot(pluginName.toUpperCase() + ".txt");
@@ -159,7 +192,32 @@ public class PipePluginAgent {
     }
   }
 
-  public PipePlugin reflect(String pluginName) {
+  public PipeCollector reflectCollector(PipeParameters collectorParameters) {
+    return (PipeCollector)
+        reflect(
+            collectorParameters.getStringOrDefault(
+                PipeCollectorConstant.COLLECTOR_KEY,
+                BuiltinPipePlugin.IOTDB_COLLECTOR.getPipePluginName()));
+  }
+
+  public PipeProcessor reflectProcessor(PipeParameters processorParameters) {
+    return (PipeProcessor)
+        reflect(
+            processorParameters.getStringOrDefault(
+                PipeProcessorConstant.PROCESSOR_KEY,
+                BuiltinPipePlugin.DO_NOTHING_PROCESSOR.getPipePluginName()));
+  }
+
+  public PipeConnector reflectConnector(PipeParameters connectorParameters) {
+    if (!connectorParameters.hasAttribute(PipeConnectorConstant.CONNECTOR_KEY)) {
+      throw new PipeException(
+          "Failed to reflect PipeConnector instance because 'connector' is not specified in the parameters.");
+    }
+    return (PipeConnector)
+        reflect(connectorParameters.getString(PipeConnectorConstant.CONNECTOR_KEY));
+  }
+
+  private PipePlugin reflect(String pluginName) {
     PipePluginMeta information = pipePluginMetaKeeper.getPipePluginMeta(pluginName);
     if (information == null) {
       String errorMessage =
@@ -184,23 +242,5 @@ public class PipePluginAgent {
       LOGGER.warn(errorMessage, e);
       throw new RuntimeException(errorMessage);
     }
-  }
-
-  /////////////////////////  Singleton Instance Holder  /////////////////////////
-
-  private PipePluginAgent(DataNodePipePluginMetaKeeper pipePluginMetaKeeper) {
-    this.pipePluginMetaKeeper = pipePluginMetaKeeper;
-  }
-
-  private static class PipePluginAgentServiceHolder {
-    private static PipePluginAgent instance = null;
-  }
-
-  public static PipePluginAgent setupAndGetInstance(
-      DataNodePipePluginMetaKeeper pipePluginMetaKeeper) {
-    if (PipePluginAgentServiceHolder.instance == null) {
-      PipePluginAgentServiceHolder.instance = new PipePluginAgent(pipePluginMetaKeeper);
-    }
-    return PipePluginAgentServiceHolder.instance;
   }
 }

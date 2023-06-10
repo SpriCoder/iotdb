@@ -20,16 +20,25 @@
 package org.apache.iotdb.metrics.metricsets.jvm;
 
 import org.apache.iotdb.metrics.AbstractMetricService;
+import org.apache.iotdb.metrics.MetricConstant;
 import org.apache.iotdb.metrics.metricsets.IMetricSet;
 import org.apache.iotdb.metrics.utils.MetricLevel;
 import org.apache.iotdb.metrics.utils.MetricType;
 
 import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 
 /** This file is modified from io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics */
 public class JvmThreadMetrics implements IMetricSet {
+  private static long lastUpdateTime = 0L;
+  private static final Map<Thread.State, Integer> threadStateCountMap =
+      new EnumMap<>(Thread.State.class);
+
   @Override
   public void bindTo(AbstractMetricService metricService) {
     ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
@@ -85,9 +94,25 @@ public class JvmThreadMetrics implements IMetricSet {
 
   // VisibleForTesting
   static long getThreadStateCount(ThreadMXBean threadBean, Thread.State state) {
-    return Arrays.stream(threadBean.getThreadInfo(threadBean.getAllThreadIds()))
-        .filter(threadInfo -> threadInfo != null && threadInfo.getThreadState() == state)
-        .count();
+    checkAndUpdate(threadBean);
+    return threadStateCountMap.getOrDefault(state, 0);
+  }
+
+  private static void checkAndUpdate(ThreadMXBean threadBean) {
+    if (System.currentTimeMillis() - lastUpdateTime < MetricConstant.UPDATE_INTERVAL) {
+      return;
+    }
+    lastUpdateTime = System.currentTimeMillis();
+    threadStateCountMap.clear();
+    List<ThreadInfo> infoList =
+        Arrays.asList(threadBean.getThreadInfo(threadBean.getAllThreadIds()));
+    infoList.forEach(
+        info -> {
+          if (info != null) {
+            Thread.State state = info.getThreadState();
+            threadStateCountMap.compute(state, (k, v) -> v == null ? 1 : v + 1);
+          }
+        });
   }
 
   private static String getStateTagValue(Thread.State state) {

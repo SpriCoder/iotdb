@@ -18,13 +18,14 @@
  */
 package org.apache.iotdb.db.metadata.schemaregion;
 
-import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.consensus.SchemaRegionId;
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.file.SystemFileFactory;
 import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.path.PathPatternTree;
+import org.apache.iotdb.commons.schema.ClusterSchemaQuotaLevel;
+import org.apache.iotdb.commons.schema.filter.SchemaFilterType;
 import org.apache.iotdb.commons.schema.node.role.IDeviceMNode;
 import org.apache.iotdb.commons.schema.node.role.IMeasurementMNode;
 import org.apache.iotdb.consensus.ConsensusFactory;
@@ -33,7 +34,7 @@ import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.metadata.AliasAlreadyExistException;
 import org.apache.iotdb.db.exception.metadata.PathAlreadyExistException;
 import org.apache.iotdb.db.exception.metadata.SchemaDirCreationFailureException;
-import org.apache.iotdb.db.exception.metadata.SeriesNumberOverflowException;
+import org.apache.iotdb.db.exception.metadata.SchemaQuotaExceededException;
 import org.apache.iotdb.db.exception.metadata.SeriesOverflowException;
 import org.apache.iotdb.db.metadata.MetadataConstant;
 import org.apache.iotdb.db.metadata.idtable.IDTable;
@@ -53,7 +54,6 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.ISchemaRegionPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.SchemaRegionPlanVisitor;
 import org.apache.iotdb.db.metadata.plan.schemaregion.impl.SchemaRegionPlanDeserializer;
 import org.apache.iotdb.db.metadata.plan.schemaregion.impl.SchemaRegionPlanSerializer;
-import org.apache.iotdb.db.metadata.plan.schemaregion.impl.read.SchemaRegionReadPlanFactory;
 import org.apache.iotdb.db.metadata.plan.schemaregion.impl.write.SchemaRegionWritePlanFactory;
 import org.apache.iotdb.db.metadata.plan.schemaregion.read.IShowDevicesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.read.IShowNodesPlan;
@@ -63,6 +63,7 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IAutoCreateDeviceMNo
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeAliasPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeTagOffsetPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateAlignedTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateLogicalViewPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeleteTimeSeriesPlan;
@@ -75,11 +76,11 @@ import org.apache.iotdb.db.metadata.query.info.INodeSchemaInfo;
 import org.apache.iotdb.db.metadata.query.info.ITimeSeriesSchemaInfo;
 import org.apache.iotdb.db.metadata.query.reader.ISchemaReader;
 import org.apache.iotdb.db.metadata.rescon.CachedSchemaRegionStatistics;
+import org.apache.iotdb.db.metadata.rescon.DataNodeSchemaQuotaManager;
 import org.apache.iotdb.db.metadata.rescon.MemSchemaRegionStatistics;
 import org.apache.iotdb.db.metadata.tag.TagManager;
 import org.apache.iotdb.db.metadata.template.Template;
 import org.apache.iotdb.db.utils.SchemaUtils;
-import org.apache.iotdb.external.api.ISeriesNumerMonitor;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
@@ -92,7 +93,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -151,12 +151,11 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   private MLogDescriptionWriter logDescriptionWriter;
 
   private final CachedSchemaRegionStatistics regionStatistics;
+  private final DataNodeSchemaQuotaManager schemaQuotaManager =
+      DataNodeSchemaQuotaManager.getInstance();
 
   private MTreeBelowSGCachedImpl mtree;
   private TagManager tagManager;
-
-  // seriesNumberMonitor may be null
-  private final ISeriesNumerMonitor seriesNumerMonitor;
 
   // region Interfaces and Implementation of initialization、snapshot、recover and clear
   public SchemaRegionSchemaFileImpl(ISchemaRegionParams schemaRegionParams)
@@ -167,8 +166,6 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
 
     storageGroupDirPath = config.getSchemaDir() + File.separator + storageGroupFullPath;
     schemaRegionDirPath = storageGroupDirPath + File.separator + schemaRegionId.getId();
-
-    this.seriesNumerMonitor = schemaRegionParams.getSeriesNumberMonitor();
     this.regionStatistics =
         new CachedSchemaRegionStatistics(
             schemaRegionId.getId(), schemaRegionParams.getSchemaEngineStatistics());
@@ -438,7 +435,7 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   // region Interfaces for schema region Info query and operation
 
   @Override
-  public String getStorageGroupFullPath() {
+  public String getDatabaseFullPath() {
     return storageGroupFullPath;
   }
 
@@ -449,12 +446,6 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
 
   @Override
   public synchronized void deleteSchemaRegion() throws MetadataException {
-    // collect all the LeafMNode in this schema region
-    long seriesCount = regionStatistics.getSeriesNumber();
-    if (seriesNumerMonitor != null) {
-      seriesNumerMonitor.deleteTimeSeries((int) seriesCount);
-    }
-
     // clear all the components and release all the file handlers
     clear();
 
@@ -594,44 +585,27 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   @Override
   @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
   public void createTimeseries(ICreateTimeSeriesPlan plan, long offset) throws MetadataException {
-    if (!regionStatistics.isAllowToCreateNewSeries()) {
+    while (!regionStatistics.isAllowToCreateNewSeries()) {
       CacheMemoryManager.getInstance().waitIfReleasing();
-      if (!regionStatistics.isAllowToCreateNewSeries()) {
-        logger.warn("Series overflow when creating: [{}]", plan.getPath().getFullPath());
-        throw new SeriesOverflowException();
-      }
     }
 
-    if (seriesNumerMonitor != null && !seriesNumerMonitor.addTimeSeries(1)) {
-      throw new SeriesNumberOverflowException();
-    }
-
+    PartialPath path = plan.getPath();
+    IMeasurementMNode<ICachedMNode> leafMNode;
     try {
-      PartialPath path = plan.getPath();
-      IMeasurementMNode<ICachedMNode> leafMNode;
-      // using try-catch to restore seriesNumberMonitor's state while create failed
-      try {
-        SchemaUtils.checkDataTypeWithEncoding(plan.getDataType(), plan.getEncoding());
+      SchemaUtils.checkDataTypeWithEncoding(plan.getDataType(), plan.getEncoding());
 
-        TSDataType type = plan.getDataType();
-        // create time series in MTree
-        leafMNode =
-            mtree.createTimeseriesWithPinnedReturn(
-                path,
-                type,
-                plan.getEncoding(),
-                plan.getCompressor(),
-                plan.getProps(),
-                plan.getAlias());
-      } catch (Throwable t) {
-        if (seriesNumerMonitor != null) {
-          seriesNumerMonitor.deleteTimeSeries(1);
-        }
-        throw t;
-      }
+      TSDataType type = plan.getDataType();
+      // create time series in MTree
+      leafMNode =
+          mtree.createTimeseriesWithPinnedReturn(
+              path,
+              type,
+              plan.getEncoding(),
+              plan.getCompressor(),
+              plan.getProps(),
+              plan.getAlias());
 
       try {
-
         // update statistics and schemaDataTypeNumMap
         regionStatistics.addTimeseries(1L);
 
@@ -717,15 +691,8 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   @Override
   public void createAlignedTimeSeries(ICreateAlignedTimeSeriesPlan plan) throws MetadataException {
     int seriesCount = plan.getMeasurements().size();
-    if (!regionStatistics.isAllowToCreateNewSeries()) {
+    while (!regionStatistics.isAllowToCreateNewSeries()) {
       CacheMemoryManager.getInstance().waitIfReleasing();
-      if (!regionStatistics.isAllowToCreateNewSeries()) {
-        throw new SeriesOverflowException();
-      }
-    }
-
-    if (seriesNumerMonitor != null && !seriesNumerMonitor.addTimeSeries(seriesCount)) {
-      throw new SeriesNumberOverflowException();
     }
 
     try {
@@ -736,27 +703,20 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
       List<Map<String, String>> tagsList = plan.getTagsList();
       List<Map<String, String>> attributesList = plan.getAttributesList();
       List<IMeasurementMNode<ICachedMNode>> measurementMNodeList;
-      // using try-catch to restore seriesNumberMonitor's state while create failed
-      try {
-        for (int i = 0; i < measurements.size(); i++) {
-          SchemaUtils.checkDataTypeWithEncoding(dataTypes.get(i), encodings.get(i));
-        }
 
-        // create time series in MTree
-        measurementMNodeList =
-            mtree.createAlignedTimeseries(
-                prefixPath,
-                measurements,
-                plan.getDataTypes(),
-                plan.getEncodings(),
-                plan.getCompressors(),
-                plan.getAliasList());
-      } catch (Throwable t) {
-        if (seriesNumerMonitor != null) {
-          seriesNumerMonitor.deleteTimeSeries(seriesCount);
-        }
-        throw t;
+      for (int i = 0; i < measurements.size(); i++) {
+        SchemaUtils.checkDataTypeWithEncoding(dataTypes.get(i), encodings.get(i));
       }
+
+      // create time series in MTree
+      measurementMNodeList =
+          mtree.createAlignedTimeseries(
+              prefixPath,
+              measurements,
+              plan.getDataTypes(),
+              plan.getEncodings(),
+              plan.getCompressors(),
+              plan.getAliasList());
 
       try {
 
@@ -833,6 +793,18 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   }
 
   @Override
+  public void checkSchemaQuota(PartialPath devicePath, int timeSeriesNum)
+      throws SchemaQuotaExceededException {
+    if (schemaQuotaManager.getLevel().equals(ClusterSchemaQuotaLevel.TIMESERIES)) {
+      schemaQuotaManager.checkMeasurementLevel(timeSeriesNum);
+    } else if (schemaQuotaManager.getLevel().equals(ClusterSchemaQuotaLevel.DEVICE)) {
+      if (!mtree.checkDeviceNodeExists(devicePath)) {
+        schemaQuotaManager.checkDeviceLevel();
+      }
+    }
+  }
+
+  @Override
   public long constructSchemaBlackList(PathPatternTree patternTree) throws MetadataException {
     long preDeletedNum = 0;
     for (PartialPath pathPattern : patternTree.getAllPathPatterns()) {
@@ -898,15 +870,33 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
     }
   }
 
+  @Override
+  public void createLogicalView(ICreateLogicalViewPlan createLogicalViewPlan)
+      throws MetadataException {
+    throw new UnsupportedOperationException("createLogicalView is unsupported.");
+  }
+
+  @Override
+  public long constructLogicalViewBlackList(PathPatternTree patternTree) throws MetadataException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void rollbackLogicalViewBlackList(PathPatternTree patternTree) throws MetadataException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void deleteLogicalView(PathPatternTree patternTree) throws MetadataException {
+    throw new UnsupportedOperationException();
+  }
+
   private void deleteSingleTimeseriesInBlackList(PartialPath path)
       throws MetadataException, IOException {
     IMeasurementMNode<ICachedMNode> measurementMNode = mtree.deleteTimeseries(path);
     removeFromTagInvertedIndex(measurementMNode);
 
     regionStatistics.deleteTimeseries(1L);
-    if (seriesNumerMonitor != null) {
-      seriesNumerMonitor.deleteTimeSeries(1);
-    }
   }
 
   private void recoverRollbackPreDeleteTimeseries(PartialPath path) throws MetadataException {
@@ -920,9 +910,6 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
     removeFromTagInvertedIndex(measurementMNode);
 
     regionStatistics.deleteTimeseries(1L);
-    if (seriesNumerMonitor != null) {
-      seriesNumerMonitor.deleteTimeSeries(1);
-    }
   }
   // endregion
 
@@ -1225,7 +1212,9 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   @Override
   public void activateSchemaTemplate(IActivateTemplateInClusterPlan plan, Template template)
       throws MetadataException {
-
+    while (!regionStatistics.isAllowToCreateNewSeries()) {
+      CacheMemoryManager.getInstance().waitIfReleasing();
+    }
     try {
       ICachedMNode deviceNode = getDeviceNodeWithAutoCreate(plan.getActivatePath());
       try {
@@ -1302,7 +1291,9 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
   @Override
   public ISchemaReader<ITimeSeriesSchemaInfo> getTimeSeriesReader(
       IShowTimeSeriesPlan showTimeSeriesPlan) throws MetadataException {
-    if (showTimeSeriesPlan.getKey() != null && showTimeSeriesPlan.getValue() != null) {
+    if (showTimeSeriesPlan.getSchemaFilter() != null
+        && SchemaFilterType.TAGS_FILTER.equals(
+            showTimeSeriesPlan.getSchemaFilter().getSchemaFilterType())) {
       return tagManager.getTimeSeriesReaderWithIndex(showTimeSeriesPlan);
     } else {
       return mtree.getTimeSeriesReader(
@@ -1324,48 +1315,6 @@ public class SchemaRegionSchemaFileImpl implements ISchemaRegion {
     return mtree.getNodeReader(showNodesPlan);
   }
   // endregion
-
-  @Override
-  public long countDeviceNumBySchemaRegion() throws MetadataException {
-    ISchemaReader<IDeviceSchemaInfo> deviceReader =
-        this.getDeviceReader(
-            SchemaRegionReadPlanFactory.getShowDevicesPlan(
-                new PartialPath(
-                    IoTDBConstant.PATH_ROOT
-                        + IoTDBConstant.PATH_SEPARATOR
-                        + IoTDBConstant.MULTI_LEVEL_PATH_WILDCARD),
-                false));
-    long count = 0;
-    while (deviceReader.hasNext()) {
-      deviceReader.next();
-      count++;
-    }
-    return count;
-  }
-
-  @Override
-  public long countTimeSeriesNumBySchemaRegion() throws MetadataException {
-    ISchemaReader<ITimeSeriesSchemaInfo> timeSeriesReader =
-        this.getTimeSeriesReader(
-            SchemaRegionReadPlanFactory.getShowTimeSeriesPlan(
-                new PartialPath(
-                    IoTDBConstant.PATH_ROOT
-                        + IoTDBConstant.PATH_SEPARATOR
-                        + IoTDBConstant.MULTI_LEVEL_PATH_WILDCARD),
-                new HashMap<>(),
-                false,
-                null,
-                null,
-                0,
-                0,
-                false));
-    long count = 0;
-    while (timeSeriesReader.hasNext()) {
-      timeSeriesReader.next();
-      count++;
-    }
-    return count;
-  }
 
   private static class RecoverOperationResult {
 

@@ -23,6 +23,7 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.CountSchemaM
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.DevicesCountNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.DevicesSchemaScanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.LevelTimeSeriesCountNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.LogicalViewSchemaScanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.NodeManagementMemoryMergeNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.NodePathsConvertNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.NodePathsCountNode;
@@ -50,6 +51,10 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.InvalidateS
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.PreDeactivateTemplateNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.RollbackPreDeactivateTemplateNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.RollbackSchemaBlackListNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.view.ConstructLogicalViewBlackListNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.view.CreateLogicalViewNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.view.DeleteLogicalViewNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.view.RollbackLogicalViewBlackListNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.AggregationNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.DeviceMergeNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.DeviceViewIntoNode;
@@ -167,7 +172,12 @@ public enum PlanNodeType {
   INTERNAL_CREATE_MULTI_TIMESERIES((short) 69),
   IDENTITY_SINK((short) 70),
   SHUFFLE_SINK((short) 71),
-  BATCH_ACTIVATE_TEMPLATE((short) 72);
+  BATCH_ACTIVATE_TEMPLATE((short) 72),
+  CREATE_LOGICAL_VIEW((short) 73),
+  CONSTRUCT_LOGICAL_VIEW_BLACK_LIST((short) 74),
+  ROLLBACK_LOGICAL_VIEW_BLACK_LIST((short) 75),
+  DELETE_LOGICAL_VIEW((short) 76),
+  LOGICAL_VIEW_SCHEMA_SCAN((short) 77);
 
   public static final int BYTES = Short.BYTES;
 
@@ -360,6 +370,16 @@ public enum PlanNodeType {
         return ShuffleSinkNode.deserialize(buffer);
       case 72:
         return BatchActivateTemplateNode.deserialize(buffer);
+      case 73:
+        return CreateLogicalViewNode.deserialize(buffer);
+      case 74:
+        return ConstructLogicalViewBlackListNode.deserialize(buffer);
+      case 75:
+        return RollbackLogicalViewBlackListNode.deserialize(buffer);
+      case 76:
+        return DeleteLogicalViewNode.deserialize(buffer);
+      case 77:
+        return LogicalViewSchemaScanNode.deserialize(buffer);
       default:
         throw new IllegalArgumentException("Invalid node type: " + nodeType);
     }

@@ -28,7 +28,7 @@ import org.apache.iotdb.db.mpp.common.MPPQueryContext;
 import org.apache.iotdb.db.mpp.common.PlanFragmentId;
 import org.apache.iotdb.db.mpp.execution.QueryStateMachine;
 import org.apache.iotdb.db.mpp.execution.fragment.FragmentInfo;
-import org.apache.iotdb.db.mpp.metric.QueryMetricsManager;
+import org.apache.iotdb.db.mpp.metric.QueryExecutionMetricSet;
 import org.apache.iotdb.db.mpp.plan.analyze.QueryType;
 import org.apache.iotdb.db.mpp.plan.planner.plan.FragmentInstance;
 import org.apache.iotdb.rpc.TSStatusCode;
@@ -65,7 +65,8 @@ public class ClusterScheduler implements IScheduler {
   private IFragInstanceStateTracker stateTracker;
   private IQueryTerminator queryTerminator;
 
-  private static final QueryMetricsManager QUERY_METRICS = QueryMetricsManager.getInstance();
+  private static final QueryExecutionMetricSet QUERY_EXECUTION_METRICS =
+      QueryExecutionMetricSet.getInstance();
 
   public ClusterScheduler(
       MPPQueryContext queryContext,
@@ -135,7 +136,7 @@ public class ClusterScheduler implements IScheduler {
       stateMachine.transitionToFailed(e);
       return;
     } finally {
-      QUERY_METRICS.recordExecutionCost(WAIT_FOR_DISPATCH, System.nanoTime() - startTime);
+      QUERY_EXECUTION_METRICS.recordExecutionCost(WAIT_FOR_DISPATCH, System.nanoTime() - startTime);
     }
 
     // For the FragmentInstance of WRITE, it will be executed directly when dispatching.
@@ -154,7 +155,7 @@ public class ClusterScheduler implements IScheduler {
   }
 
   @Override
-  public void stop() {
+  public void stop(Throwable t) {
     // TODO: It seems that it is unnecessary to check whether they are null or not. Is it a best
     // practice ?
     dispatcher.abort();
@@ -163,7 +164,7 @@ public class ClusterScheduler implements IScheduler {
     }
     // TODO: (xingtanzjr) handle the exception when the termination cannot succeed
     if (queryTerminator != null) {
-      queryTerminator.terminate();
+      queryTerminator.terminate(t);
     }
   }
 

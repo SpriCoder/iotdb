@@ -18,6 +18,9 @@
  */
 package org.apache.iotdb.db.engine.compaction.selector.estimator;
 
+import org.apache.iotdb.db.conf.IoTDBConfig;
+import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.conf.adapter.CompressionRatio;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
 import org.apache.iotdb.tsfile.read.TsFileSequenceReader;
 
@@ -33,6 +36,10 @@ import java.util.Map;
 public abstract class AbstractCompactionEstimator {
 
   protected Map<TsFileResource, TsFileSequenceReader> fileReaderCache = new HashMap<>();
+
+  protected IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+
+  protected long compressionRatio = (long) CompressionRatio.getInstance().getRatio() + 1;
 
   /**
    * Estimate the memory cost of compacting the unseq file and its corresponding overlapped seq
@@ -54,9 +61,9 @@ public abstract class AbstractCompactionEstimator {
     return reader;
   }
 
-  public void clear() throws IOException {
-    for (TsFileSequenceReader sequenceReader : fileReaderCache.values()) {
-      sequenceReader.close();
+  public void close() throws IOException {
+    for (TsFileSequenceReader reader : fileReaderCache.values()) {
+      reader.close();
     }
     fileReaderCache.clear();
   }

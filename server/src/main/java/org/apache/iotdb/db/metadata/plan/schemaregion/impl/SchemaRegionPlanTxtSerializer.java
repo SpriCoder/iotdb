@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.metadata.plan.schemaregion.impl;
 
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.schema.view.viewExpression.ViewExpression;
 import org.apache.iotdb.db.metadata.logfile.ISerializer;
 import org.apache.iotdb.db.metadata.plan.schemaregion.ISchemaRegionPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.SchemaRegionPlanVisitor;
@@ -28,6 +29,7 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IAutoCreateDeviceMNo
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeAliasPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IChangeTagOffsetPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateAlignedTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateLogicalViewPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.ICreateTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IDeleteTimeSeriesPlan;
@@ -35,6 +37,9 @@ import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeactivateTempla
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IPreDeleteTimeSeriesPlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeactivateTemplatePlan;
 import org.apache.iotdb.db.metadata.plan.schemaregion.write.IRollbackPreDeleteTimeSeriesPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IPreDeleteLogicalViewPlan;
+import org.apache.iotdb.db.metadata.plan.schemaregion.write.view.IRollbackPreDeleteLogicalViewPlan;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
@@ -239,6 +244,47 @@ public class SchemaRegionPlanTxtSerializer implements ISerializer<ISchemaRegionP
       stringBuilder.append("{");
       templateSetInfo.forEach((k, v) -> stringBuilder.append(k).append(": ").append(v).append(";"));
       stringBuilder.append("}");
+    }
+
+    @Override
+    public Void visitCreateLogicalView(
+        ICreateLogicalViewPlan createLogicalViewPlan, StringBuilder stringBuilder) {
+      int viewSize = createLogicalViewPlan.getViewSize();
+      List<PartialPath> viewPathList = createLogicalViewPlan.getViewPathList();
+      Map<PartialPath, ViewExpression> viewPathToSourceMap =
+          createLogicalViewPlan.getViewPathToSourceExpressionMap();
+      for (int i = 0; i < viewSize; i++) {
+        PartialPath thisPath = viewPathList.get(i);
+        ViewExpression thisExp = viewPathToSourceMap.get(thisPath);
+        stringBuilder.append(thisPath).append(FIELD_SEPARATOR).append(thisExp.toString());
+        if (i + 1 >= viewSize) {
+          break;
+        }
+        stringBuilder.append(FIELD_SEPARATOR);
+      }
+      return null;
+    }
+
+    @Override
+    public Void visitPreDeleteLogicalView(
+        IPreDeleteLogicalViewPlan preDeleteLogicalViewPlan, StringBuilder stringBuilder) {
+      stringBuilder.append(preDeleteLogicalViewPlan.getPath().getFullPath());
+      return null;
+    }
+
+    @Override
+    public Void visitRollbackPreDeleteLogicalView(
+        IRollbackPreDeleteLogicalViewPlan rollbackPreDeleteLogicalViewPlan,
+        StringBuilder stringBuilder) {
+      stringBuilder.append(rollbackPreDeleteLogicalViewPlan.getPath().getFullPath());
+      return null;
+    }
+
+    @Override
+    public Void visitDeleteLogicalView(
+        IDeleteLogicalViewPlan deleteLogicalViewPlan, StringBuilder stringBuilder) {
+      stringBuilder.append(deleteLogicalViewPlan.getPath().getFullPath());
+      return null;
     }
   }
 }

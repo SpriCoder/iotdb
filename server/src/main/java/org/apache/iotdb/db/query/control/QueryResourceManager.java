@@ -18,8 +18,6 @@
  */
 package org.apache.iotdb.db.query.control;
 
-import org.apache.iotdb.db.service.TemporaryQueryDataFileService;
-
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -57,7 +55,7 @@ public class QueryResourceManager {
    * queryId = xx + Long.MIN_VALUE
    */
   public long assignCompactionQueryId() {
-    long threadNum = Long.parseLong((Thread.currentThread().getName().split("-"))[4]);
+    long threadNum = Long.parseLong((Thread.currentThread().getName().split("-"))[5]);
     long queryId = Long.MIN_VALUE + threadNum;
     filePathsManager.addQueryId(queryId);
     return queryId;
@@ -68,13 +66,10 @@ public class QueryResourceManager {
    * query tokens created by this jdbc request must be cleared.
    */
   // Suppress high Cognitive Complexity warning
+  // attention: Since V1.0, Query Module does not use this method for cleaning
   public void endQuery(long queryId) {
-
     // remove usage of opened file paths of current thread
     filePathsManager.removeUsedFilesForQuery(queryId);
-
-    // close and delete UDF temp files
-    TemporaryQueryDataFileService.getInstance().deregister(queryId);
   }
 
   public QueryFileManager getQueryFileManager() {

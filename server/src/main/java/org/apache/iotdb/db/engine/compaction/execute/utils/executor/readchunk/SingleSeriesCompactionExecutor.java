@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.engine.compaction.execute.utils.executor.readchunk;
 
 import org.apache.iotdb.commons.path.PartialPath;
@@ -25,7 +26,7 @@ import org.apache.iotdb.db.engine.compaction.schedule.CompactionTaskManager;
 import org.apache.iotdb.db.engine.compaction.schedule.constant.CompactionType;
 import org.apache.iotdb.db.engine.compaction.schedule.constant.ProcessChunkType;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
-import org.apache.iotdb.db.service.metrics.recorder.CompactionMetricsManager;
+import org.apache.iotdb.db.service.metrics.CompactionMetrics;
 import org.apache.iotdb.tsfile.file.header.ChunkHeader;
 import org.apache.iotdb.tsfile.file.metadata.ChunkMetadata;
 import org.apache.iotdb.tsfile.read.TimeValuePair;
@@ -128,7 +129,7 @@ public class SingleSeriesCompactionExecutor {
         if (this.chunkWriter == null) {
           constructChunkWriterFromReadChunk(currentChunk);
         }
-        CompactionMetricsManager.getInstance()
+        CompactionMetrics.getInstance()
             .recordReadInfo(
                 (long) currentChunk.getHeader().getSerializedSize()
                     + currentChunk.getHeader().getDataSize());
@@ -192,17 +193,20 @@ public class SingleSeriesCompactionExecutor {
   }
 
   private void processLargeChunk(Chunk chunk, ChunkMetadata chunkMetadata) throws IOException {
-    if (pointCountInChunkWriter != 0L) {
-      // if there are points remaining in ChunkWriter
-      // deserialize current chunk and write to ChunkWriter, then flush the ChunkWriter
-      summary.increaseDeserializedChunkNum(1);
-      writeChunkIntoChunkWriter(chunk);
-      flushChunkWriterIfLargeEnough();
-    } else if (cachedChunk != null) {
+    if (cachedChunk != null && canMerge(cachedChunk, chunk)) {
       // if there is a cached chunk, merge it with current chunk, then flush it
       summary.increaseMergedChunkNum(1);
       mergeWithCachedChunk(chunk, chunkMetadata);
       flushCachedChunkIfLargeEnough();
+    } else if (cachedChunk != null || pointCountInChunkWriter != 0L) {
+      // if there are points remaining in ChunkWriter
+      // deserialize current chunk and write to ChunkWriter, then flush the ChunkWriter
+      summary.increaseDeserializedChunkNum(1);
+      if (cachedChunk != null) {
+        writeCachedChunkIntoChunkWriter();
+      }
+      writeChunkIntoChunkWriter(chunk);
+      flushChunkWriterIfLargeEnough();
     } else {
       // there is no points remaining in ChunkWriter and no cached chunk
       // flush it to file directly
@@ -213,17 +217,20 @@ public class SingleSeriesCompactionExecutor {
 
   private void processMiddleChunk(Chunk chunk, ChunkMetadata chunkMetadata) throws IOException {
     // the chunk is not too large either too small
-    if (pointCountInChunkWriter != 0L) {
-      // if there are points remaining in ChunkWriter
-      // deserialize current chunk and write to ChunkWriter
-      summary.increaseDeserializedChunkNum(1);
-      writeChunkIntoChunkWriter(chunk);
-      flushChunkWriterIfLargeEnough();
-    } else if (cachedChunk != null) {
+    if (cachedChunk != null && canMerge(cachedChunk, chunk)) {
       // if there is a cached chunk, merge it with current chunk
       summary.increaseMergedChunkNum(1);
       mergeWithCachedChunk(chunk, chunkMetadata);
       flushCachedChunkIfLargeEnough();
+    } else if (cachedChunk != null || pointCountInChunkWriter != 0L) {
+      // if there are points remaining in ChunkWriter
+      // deserialize current chunk and write to ChunkWriter
+      if (cachedChunk != null) {
+        writeCachedChunkIntoChunkWriter();
+      }
+      summary.increaseDeserializedChunkNum(1);
+      writeChunkIntoChunkWriter(chunk);
+      flushChunkWriterIfLargeEnough();
     } else {
       // there is no points remaining in ChunkWriter and no cached chunk
       // cached current chunk
@@ -244,6 +251,13 @@ public class SingleSeriesCompactionExecutor {
     summary.increaseDeserializedChunkNum(1);
     writeChunkIntoChunkWriter(chunk);
     flushChunkWriterIfLargeEnough();
+  }
+
+  private boolean canMerge(Chunk chunk1, Chunk chunk2) {
+    ChunkHeader header1 = chunk1.getHeader();
+    ChunkHeader header2 = chunk2.getHeader();
+    return (header1.getEncodingType() == header2.getEncodingType())
+        && (header1.getCompressionType() == header2.getCompressionType());
   }
 
   /** Deserialize a chunk into points and write it to the chunkWriter */
@@ -322,7 +336,7 @@ public class SingleSeriesCompactionExecutor {
     if (chunkMetadata.getEndTime() > maxEndTimestamp) {
       maxEndTimestamp = chunkMetadata.getEndTime();
     }
-    CompactionMetricsManager.getInstance()
+    CompactionMetrics.getInstance()
         .recordWriteInfo(
             CompactionType.INNER_SEQ_COMPACTION,
             isCachedChunk ? ProcessChunkType.MERGE_CHUNK : ProcessChunkType.FLUSH_CHUNK,
@@ -336,7 +350,7 @@ public class SingleSeriesCompactionExecutor {
         || chunkWriter.estimateMaxSeriesMemSize() >= targetChunkSize) {
       CompactionTaskManager.mergeRateLimiterAcquire(
           compactionRateLimiter, chunkWriter.estimateMaxSeriesMemSize());
-      CompactionMetricsManager.getInstance()
+      CompactionMetrics.getInstance()
           .recordWriteInfo(
               CompactionType.INNER_SEQ_COMPACTION,
               ProcessChunkType.DESERIALIZE_CHUNK,
@@ -359,7 +373,7 @@ public class SingleSeriesCompactionExecutor {
   private void flushChunkWriter() throws IOException {
     CompactionTaskManager.mergeRateLimiterAcquire(
         compactionRateLimiter, chunkWriter.estimateMaxSeriesMemSize());
-    CompactionMetricsManager.getInstance()
+    CompactionMetrics.getInstance()
         .recordWriteInfo(
             CompactionType.INNER_SEQ_COMPACTION,
             ProcessChunkType.DESERIALIZE_CHUNK,

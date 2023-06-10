@@ -929,7 +929,7 @@ public class TsFileSequenceReader implements AutoCloseable {
           boolean needChunkMetadata)
           throws IOException {
     Map<String, Pair<List<IChunkMetadata>, Pair<Long, Long>>> timeseriesMetadataOffsetMap =
-        new HashMap<>();
+        new LinkedHashMap<>();
     List<MetadataIndexEntry> childrenEntryList = measurementNode.getChildren();
     for (int i = 0; i < childrenEntryList.size(); i++) {
       long startOffset = childrenEntryList.get(i).getOffset();
@@ -2044,6 +2044,24 @@ public class TsFileSequenceReader implements AutoCloseable {
       Map<String, TimeseriesMetadata> timeseriesMetadataMap = readDeviceMetadata(device);
       for (TimeseriesMetadata timeseriesMetadata : timeseriesMetadataMap.values()) {
         result.put(timeseriesMetadata.getMeasurementId(), timeseriesMetadata.getTSDataType());
+      }
+    }
+    return result;
+  }
+
+  /**
+   * get all types of measurements in this file
+   *
+   * @return full path -> datatype
+   */
+  public Map<String, TSDataType> getFullPathDataTypeMap() throws IOException {
+    final Map<String, TSDataType> result = new HashMap<>();
+    for (final String device : getAllDevices()) {
+      Map<String, TimeseriesMetadata> timeseriesMetadataMap = readDeviceMetadata(device);
+      for (TimeseriesMetadata timeseriesMetadata : timeseriesMetadataMap.values()) {
+        result.put(
+            device + TsFileConstant.PATH_SEPARATOR + timeseriesMetadata.getMeasurementId(),
+            timeseriesMetadata.getTSDataType());
       }
     }
     return result;

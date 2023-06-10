@@ -50,9 +50,9 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.AggregationDescriptor
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.AggregationStep;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.CrossSeriesAggregationDescriptor;
 import org.apache.iotdb.db.mpp.plan.planner.plan.parameter.OrderByParameter;
+import org.apache.iotdb.db.mpp.plan.statement.component.OrderByKey;
 import org.apache.iotdb.db.mpp.plan.statement.component.Ordering;
 import org.apache.iotdb.db.mpp.plan.statement.component.SortItem;
-import org.apache.iotdb.db.mpp.plan.statement.component.SortKey;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.read.filter.TimeFilter;
 import org.apache.iotdb.tsfile.read.filter.basic.Filter;
@@ -114,38 +114,36 @@ public class QueryLogicalPlanUtil {
     List<PlanNode> sourceNodeList = new ArrayList<>();
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s1")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s1"), null));
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s2")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s2"), null));
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s3")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d1.s3"), null));
     sourceNodeList.add(
         new AlignedLastQueryScanNode(
             queryId.genPlanNodeId(),
-            new AlignedPath((MeasurementPath) schemaMap.get("root.sg.d2.a.s1"))));
+            new AlignedPath((MeasurementPath) schemaMap.get("root.sg.d2.a.s1")),
+            null));
     sourceNodeList.add(
         new AlignedLastQueryScanNode(
             queryId.genPlanNodeId(),
-            new AlignedPath((MeasurementPath) schemaMap.get("root.sg.d2.a.s2"))));
+            new AlignedPath((MeasurementPath) schemaMap.get("root.sg.d2.a.s2")),
+            null));
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s1")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s1"), null));
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s2")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s2"), null));
     sourceNodeList.add(
         new LastQueryScanNode(
-            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s4")));
+            queryId.genPlanNodeId(), (MeasurementPath) schemaMap.get("root.sg.d2.s4"), null));
 
     LastQueryNode lastQueryNode =
         new LastQueryNode(
-            queryId.genPlanNodeId(),
-            sourceNodeList,
-            TimeFilter.gt(100),
-            new OrderByParameter(
-                Collections.singletonList(new SortItem(SortKey.TIMESERIES, Ordering.ASC))));
+            queryId.genPlanNodeId(), sourceNodeList, TimeFilter.gt(100), Ordering.ASC);
 
     querySQLs.add(sql);
     sqlToPlanMap.put(sql, lastQueryNode);
@@ -348,8 +346,8 @@ public class QueryLogicalPlanUtil {
             queryId.genPlanNodeId(),
             new OrderByParameter(
                 Arrays.asList(
-                    new SortItem(SortKey.DEVICE, Ordering.ASC),
-                    new SortItem(SortKey.TIME, Ordering.DESC))),
+                    new SortItem(OrderByKey.DEVICE, Ordering.ASC),
+                    new SortItem(OrderByKey.TIME, Ordering.DESC))),
             Arrays.asList(ColumnHeaderConstant.DEVICE, "s3", "s1", "s2", "s4"),
             deviceToMeasurementIndexesMap);
     deviceViewNode.addChildDeviceNode("root.sg.d1", filterNode1);
@@ -753,8 +751,8 @@ public class QueryLogicalPlanUtil {
             queryId.genPlanNodeId(),
             new OrderByParameter(
                 Arrays.asList(
-                    new SortItem(SortKey.DEVICE, Ordering.ASC),
-                    new SortItem(SortKey.TIME, Ordering.DESC))),
+                    new SortItem(OrderByKey.DEVICE, Ordering.ASC),
+                    new SortItem(OrderByKey.TIME, Ordering.DESC))),
             Arrays.asList(
                 ColumnHeaderConstant.DEVICE, "count(s1)", "max_value(s2)", "last_value(s1)"),
             deviceToMeasurementIndexesMap);
@@ -1037,8 +1035,8 @@ public class QueryLogicalPlanUtil {
             queryId.genPlanNodeId(),
             new OrderByParameter(
                 Arrays.asList(
-                    new SortItem(SortKey.DEVICE, Ordering.ASC),
-                    new SortItem(SortKey.TIME, Ordering.DESC))),
+                    new SortItem(OrderByKey.DEVICE, Ordering.ASC),
+                    new SortItem(OrderByKey.TIME, Ordering.DESC))),
             Arrays.asList(
                 ColumnHeaderConstant.DEVICE, "count(s1)", "max_value(s2)", "last_value(s1)"),
             deviceToMeasurementIndexesMap);

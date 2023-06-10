@@ -28,10 +28,12 @@ import org.apache.iotdb.commons.service.ServiceType;
 import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.engine.compaction.constant.CompactionTaskStatus;
+import org.apache.iotdb.db.engine.compaction.constant.CompactionTaskType;
 import org.apache.iotdb.db.engine.compaction.execute.task.AbstractCompactionTask;
 import org.apache.iotdb.db.engine.compaction.execute.task.CompactionTaskSummary;
+import org.apache.iotdb.db.engine.compaction.execute.task.InnerSpaceCompactionTask;
 import org.apache.iotdb.db.engine.compaction.schedule.comparator.DefaultCompactionTaskComparatorImpl;
-import org.apache.iotdb.db.service.metrics.recorder.CompactionMetricsManager;
 import org.apache.iotdb.db.utils.datastructure.FixedPriorityBlockingQueue;
 
 import com.google.common.util.concurrent.RateLimiter;
@@ -39,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -68,6 +71,7 @@ public class CompactionTaskManager implements IService {
   private WrappedThreadPoolExecutor subCompactionTaskExecutionPool;
 
   public static volatile AtomicInteger currentTaskNum = new AtomicInteger(0);
+
   private final FixedPriorityBlockingQueue<AbstractCompactionTask> candidateCompactionTaskQueue =
       new FixedPriorityBlockingQueue<>(
           config.getCandidateCompactionTaskQueueSize(), new DefaultCompactionTaskComparatorImpl());
@@ -96,10 +100,6 @@ public class CompactionTaskManager implements IService {
       currentTaskNum = new AtomicInteger(0);
       candidateCompactionTaskQueue.regsitPollLastHook(
           AbstractCompactionTask::resetCompactionCandidateStatusForAllSourceFiles);
-      candidateCompactionTaskQueue.regsitPollLastHook(
-          x ->
-              CompactionMetricsManager.getInstance()
-                  .reportPollTaskFromWaitingQueue(x.isCrossTask(), x.isInnerSeqTask()));
       init = true;
     }
     logger.info("Compaction task manager started.");
@@ -110,13 +110,13 @@ public class CompactionTaskManager implements IService {
     this.taskExecutionPool =
         (WrappedThreadPoolExecutor)
             IoTDBThreadPoolFactory.newFixedThreadPool(
-                compactionThreadNum, ThreadName.COMPACTION_SERVICE.getName());
+                compactionThreadNum, ThreadName.COMPACTION_WORKER.getName());
     this.subCompactionTaskExecutionPool =
         (WrappedThreadPoolExecutor)
             IoTDBThreadPoolFactory.newFixedThreadPool(
                 compactionThreadNum
                     * IoTDBDescriptor.getInstance().getConfig().getSubCompactionTaskNum(),
-                ThreadName.COMPACTION_SUB_SERVICE.getName());
+                ThreadName.COMPACTION_SUB_TASK.getName());
     for (int i = 0; i < compactionThreadNum; ++i) {
       taskExecutionPool.submit(new CompactionWorker(i, candidateCompactionTaskQueue));
     }
@@ -221,15 +221,9 @@ public class CompactionTaskManager implements IService {
       throws InterruptedException {
     if (init
         && !candidateCompactionTaskQueue.contains(compactionTask)
-        && !isTaskRunning(compactionTask)) {
-      compactionTask.setSourceFilesToCompactionCandidate();
+        && !isTaskRunning(compactionTask)
+        && compactionTask.setSourceFilesToCompactionCandidate()) {
       candidateCompactionTaskQueue.put(compactionTask);
-
-      // add metrics
-      CompactionMetricsManager.getInstance()
-          .reportAddTaskToWaitingQueue(
-              compactionTask.isCrossTask(), compactionTask.isInnerSeqTask());
-
       return true;
     }
     return false;
@@ -349,6 +343,62 @@ public class CompactionTaskManager implements IService {
             getSGWithRegionId(task.getStorageGroupName(), task.getDataRegionId()),
             x -> new ConcurrentHashMap<>())
         .put(task, summary);
+  }
+
+  private void getWaitingTaskStatus(
+      Map<CompactionTaskType, Map<CompactionTaskStatus, Integer>> statistic) {
+    List<AbstractCompactionTask> waitingTaskList =
+        this.candidateCompactionTaskQueue.getAllElementAsList();
+    for (AbstractCompactionTask task : waitingTaskList) {
+      if (task instanceof InnerSpaceCompactionTask) {
+        statistic
+            .computeIfAbsent(
+                task.isInnerSeqTask()
+                    ? CompactionTaskType.INNER_SEQ
+                    : CompactionTaskType.INNER_UNSEQ,
+                x -> new EnumMap<>(CompactionTaskStatus.class))
+            .compute(CompactionTaskStatus.WAITING, (k, v) -> v == null ? 1 : v + 1);
+      } else {
+        statistic
+            .computeIfAbsent(
+                CompactionTaskType.CROSS, x -> new EnumMap<>(CompactionTaskStatus.class))
+            .compute(CompactionTaskStatus.WAITING, (k, v) -> v == null ? 1 : v + 1);
+      }
+    }
+  }
+
+  private void getRunningTaskStatus(
+      Map<CompactionTaskType, Map<CompactionTaskStatus, Integer>> statistic) {
+    List<AbstractCompactionTask> runningTaskList = this.getRunningCompactionTaskList();
+    for (AbstractCompactionTask task : runningTaskList) {
+      if (task instanceof InnerSpaceCompactionTask) {
+        statistic
+            .computeIfAbsent(
+                task.isInnerSeqTask()
+                    ? CompactionTaskType.INNER_SEQ
+                    : CompactionTaskType.INNER_UNSEQ,
+                x -> new EnumMap<>(CompactionTaskStatus.class))
+            .compute(CompactionTaskStatus.RUNNING, (k, v) -> v == null ? 1 : v + 1);
+      } else {
+        statistic
+            .computeIfAbsent(
+                CompactionTaskType.CROSS, x -> new EnumMap<>(CompactionTaskStatus.class))
+            .compute(CompactionTaskStatus.RUNNING, (k, v) -> v == null ? 1 : v + 1);
+      }
+    }
+  }
+
+  public Map<CompactionTaskType, Map<CompactionTaskStatus, Integer>> getCompactionTaskStatistic() {
+    Map<CompactionTaskType, Map<CompactionTaskStatus, Integer>> statistic =
+        new EnumMap<>(CompactionTaskType.class);
+
+    // update statistic of waiting tasks
+    getWaitingTaskStatus(statistic);
+
+    // update statistic of running tasks
+    getRunningTaskStatus(statistic);
+
+    return statistic;
   }
 
   public static String getSGWithRegionId(String storageGroupName, String dataRegionId) {
